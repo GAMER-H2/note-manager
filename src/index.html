@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Note Manager</title>
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <!-- App Header: Title and Settings -->
+        <header class="app-header" role="banner">
+            <div class="header-left">
+                <button
+                    class="hamburger-button"
+                    type="button"
+                    aria-label="Toggle sidebar"
+                >
+                    <span class="bar"></span>
+                    <span class="bar"></span>
+                    <span class="bar"></span>
+                </button>
+                <h1 class="app-title">Note Manager</h1>
+            </div>
+            <button
+                class="settings-button"
+                type="button"
+                aria-label="Open settings"
+            >
+                Settings
+            </button>
+        </header>
+
+        <!-- Sidebar: Folder List and Add Folder -->
+        <aside class="app-sidebar" aria-label="Folders">
+            <nav class="folder-list" aria-label="Folder list">
+                <!-- Folder buttons will be populated dynamically -->
+                <!-- Example structure (commented for reference): -->
+                <button
+                    class="folder-button"
+                    type="button"
+                    data-folder-id="pinned"
+                >
+                    Pinned
+                </button>
+            </nav>
+            <div class="sidebar-footer">
+                <button
+                    class="add-folder-button"
+                    type="button"
+                    aria-label="Add folder"
+                >
+                    + Add Folder
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main: Notes Grid (starts empty) -->
+        <main class="app-main" aria-label="Notes">
+            <section class="notes-grid" aria-live="polite" aria-busy="false">
+                <!-- Note cards will be added here automatically via JS -->
+                <!-- Example structure (commented for reference):
+        <article class="note-card" data-note-id="123">
+          <h2 class="note-title">Note Title</h2>
+          <p class="note-preview">A short preview of the note content...</p>
+        </article>
+        -->
+            </section>
+            <button class="add-note-button" type="button" aria-label="Add note">
+                +
+            </button>
+        </main>
+
+        <!-- Settings Modal -->
+        <div class="settings-overlay" data-settings-overlay hidden></div>
+        <section
+            class="settings-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            aria-describedby="settings-section-description"
+            aria-hidden="true"
+            data-settings-modal
+        >
+            <div class="settings-modal__content" role="document" tabindex="-1">
+                <aside
+                    class="settings-categories"
+                    aria-label="Settings categories"
+                >
+                    <h2 id="settings-title">Settings</h2>
+                    <nav role="tablist" aria-label="Settings categories list">
+                        <button
+                            type="button"
+                            class="settings-category"
+                            data-category="general"
+                            aria-selected="true"
+                            role="tab"
+                            aria-controls="settings-panel"
+                        >
+                            General
+                        </button>
+                        <button
+                            type="button"
+                            class="settings-category"
+                            data-category="notifications"
+                            aria-selected="false"
+                            role="tab"
+                            aria-controls="settings-panel"
+                        >
+                            Notifications
+                        </button>
+                        <button
+                            type="button"
+                            class="settings-category"
+                            data-category="appearance"
+                            aria-selected="false"
+                            role="tab"
+                            aria-controls="settings-panel"
+                        >
+                            Appearance
+                        </button>
+                    </nav>
+                </aside>
+                <div
+                    class="settings-details"
+                    aria-live="polite"
+                    role="tabpanel"
+                    id="settings-panel"
+                    tabindex="0"
+                    aria-labelledby="settings-section-title"
+                    aria-describedby="settings-section-description"
+                >
+                    <header class="settings-details__header">
+                        <div>
+                            <h3
+                                id="settings-section-title"
+                                data-settings-section-title
+                            >
+                                General
+                            </h3>
+                            <p
+                                class="settings-description"
+                                id="settings-section-description"
+                            >
+                                Configure behavior and accessibility
+                                preferences.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="settings-close-button"
+                            aria-label="Close settings"
+                            data-settings-close
+                        >
+                            ×
+                        </button>
+                    </header>
+                    <ul class="settings-toggle-list" data-settings-toggle-list>
+                        <li
+                            class="settings-toggle settings-toggle--empty"
+                            data-settings-empty
+                        >
+                            Select a category to load available toggles.
+                        </li>
+                    </ul>
+                    <template id="settings-toggle-template">
+                        <li class="settings-toggle" data-setting-row>
+                            <span>
+                                <strong data-setting-name></strong>
+                                <small data-setting-description></small>
+                            </span>
+                            <label class="switch">
+                                <input type="checkbox" data-setting-input />
+                                <span class="slider"></span>
+                            </label>
+                        </li>
+                    </template>
+                    <footer class="settings-modal__footer">
+                        <button
+                            type="button"
+                            class="settings-secondary"
+                            data-settings-cancel
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            class="settings-primary"
+                            data-settings-apply
+                        >
+                            Apply Changes
+                        </button>
+                    </footer>
+                </div>
+            </div>
+        </section>
+
+        <script type="module" src="main.js"></script>
+    </body>
+</html>
