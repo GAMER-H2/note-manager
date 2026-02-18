@@ -19,6 +19,10 @@
 
     --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.12);
     --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.18);
+
+    /* Mobile ergonomics */
+    --tap-min: 44px;
+    --fab-size: 56px;
 }
 
 *,
@@ -30,6 +34,13 @@
 html,
 body {
     height: 100%;
+}
+
+html {
+    /* Prevent text autosizing surprises on mobile + improve tap delay behavior */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    touch-action: manipulation;
 }
 
 body {
@@ -60,6 +71,13 @@ body {
         "header header"
         "sidebar main";
     gap: 0;
+
+    /* Mobile viewport correctness (avoid 100vh bugs; support safe-area) */
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
 }
 
 /* Header */
@@ -68,8 +86,14 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: var(--header-height);
-    padding: 0 16px;
+
+    /*
+     * Android/iOS status bar + notch handling:
+     * Make the header include the safe-area inset so content never sits under the status bar.
+     */
+    height: calc(var(--header-height) + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) 16px 0 16px;
+
     background: linear-gradient(180deg, #171a25 0%, var(--surface) 100%);
     border-bottom: 1px solid var(--border);
     position: sticky;
@@ -116,11 +140,12 @@ body {
     flex-direction: column;
     gap: 12px;
     height: calc(100vh - var(--header-height));
+    height: calc(100dvh - var(--header-height));
     padding: 16px 12px;
     background: linear-gradient(180deg, var(--surface) 0%, #131622 100%);
     border-right: 1px solid var(--border);
     position: sticky;
-    top: var(--header-height);
+    top: calc(var(--header-height) + env(safe-area-inset-top));
 }
 
 .folder-list {
@@ -229,6 +254,9 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 16px;
     align-content: start;
+
+    /* Prevent horizontal overflow on narrow devices */
+    min-width: 0;
 }
 
 /* Empty state (optional, shown when no notes) */
@@ -266,41 +294,6 @@ body {
         border-color 160ms ease;
 }
 
-/* Editable note (markdown) */
-.note-editor {
-    width: 100%;
-    min-height: 220px;
-    resize: vertical;
-
-    border-radius: calc(var(--radius) - 2px);
-    border: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.18);
-
-    color: var(--text);
-    font: inherit;
-    line-height: 1.5;
-
-    padding: 10px 10px;
-    outline: none;
-}
-
-.note-editor::placeholder {
-    color: var(--muted);
-}
-
-.note-editor:focus {
-    border-color: #37405a;
-    box-shadow: 0 0 0 2px rgba(79, 124, 255, 0.18);
-}
-
-/* Hint text below editor */
-.note-hint {
-    margin: 0;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--muted);
-}
-
 .note-card:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-2);
@@ -326,10 +319,17 @@ button:focus-visible,
 .folder-button:focus-visible,
 .add-folder-button:focus-visible,
 .settings-button:focus-visible,
-.note-card:focus-visible,
-.note-editor:focus-visible {
+.note-card:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
+}
+
+/* Touch targets */
+.hamburger-button,
+.settings-button,
+.add-folder-button,
+.folder-button {
+    min-height: var(--tap-min);
 }
 
 /* Responsive tweaks */
@@ -347,8 +347,25 @@ button:focus-visible,
             "main";
     }
 
+    /* Sidebar becomes an overlay drawer (JS already manages overlay behavior) */
     .app-sidebar {
-        display: none;
+        display: flex;
+        position: fixed;
+        left: 0;
+        top: var(--header-height);
+        bottom: 0;
+        width: min(var(--sidebar-width), 88vw);
+        height: auto;
+        z-index: 80;
+        transform: translateX(-102%);
+        transition: transform 220ms ease;
+        box-shadow: 0 16px 60px rgba(0, 0, 0, 0.5);
+        border-right: 1px solid var(--border);
+        padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    }
+
+    body:not(.sidebar-collapsed) .app-sidebar {
+        transform: translateX(0);
     }
 
     .app-main {
@@ -356,7 +373,7 @@ button:focus-visible,
     }
 
     .notes-grid {
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        grid-template-columns: 1fr;
         gap: 12px;
     }
 }
@@ -523,14 +540,15 @@ body.sidebar-collapsed .app-main {
 /* Floating Add Note button in bottom-right of main */
 .app-main {
     position: relative; /* make main a positioning context */
+    min-width: 0; /* helps grid/flex children not force overflow on mobile */
 }
 
 .add-note-button {
     position: absolute;
-    right: 20px;
-    bottom: 20px;
-    width: 56px;
-    height: 56px;
+    right: calc(20px + env(safe-area-inset-right));
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    width: var(--fab-size);
+    height: var(--fab-size);
     border-radius: 50%;
     border: none;
     background: var(--primary);
@@ -550,6 +568,9 @@ body.sidebar-collapsed .app-main {
         background 120ms ease,
         opacity 120ms ease;
     z-index: 5;
+
+    /* Better touch feedback on mobile */
+    -webkit-tap-highlight-color: transparent;
 }
 
 .add-note-button:hover {
@@ -571,8 +592,8 @@ body.sidebar-collapsed .app-main {
 
 @media (max-width: 768px) {
     .add-note-button {
-        right: 16px;
-        bottom: 16px;
+        right: calc(16px + env(safe-area-inset-right));
+        bottom: calc(16px + env(safe-area-inset-bottom));
         width: 52px;
         height: 52px;
     }
@@ -600,7 +621,11 @@ body.sidebar-collapsed .app-main {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 32px;
+    padding: 18px;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    padding-left: calc(18px + env(safe-area-inset-left));
+    padding-right: calc(18px + env(safe-area-inset-right));
+    padding-top: calc(18px + env(safe-area-inset-top));
     z-index: 95;
     opacity: 0;
     pointer-events: none;
@@ -609,6 +634,7 @@ body.sidebar-collapsed .app-main {
         transform 220ms ease;
     transform: translateY(12px) scale(0.98);
 }
+
 .settings-modal[aria-hidden="false"] {
     opacity: 1;
     pointer-events: auto;
@@ -630,6 +656,68 @@ body.settings-open {
     border: 1px solid rgba(255, 255, 255, 0.04);
     box-shadow:
         0 30px 80px rgba(2, 4, 10, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+/* Note editor modal */
+.note-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 7, 10, 0.72);
+    backdrop-filter: blur(3px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    z-index: 90;
+}
+.note-overlay:not([hidden]) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.note-modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    padding-left: calc(18px + env(safe-area-inset-left));
+    padding-right: calc(18px + env(safe-area-inset-right));
+    padding-top: calc(18px + env(safe-area-inset-top));
+    z-index: 95;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 180ms ease,
+        transform 220ms ease;
+    transform: translateY(12px) scale(0.98);
+}
+
+.note-modal[aria-hidden="false"] {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+html.note-open,
+body.note-open {
+    overflow: hidden;
+}
+
+/* Big editor surface */
+.note-modal__content {
+    width: min(980px, 100%);
+    height: min(760px, 92vh);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    box-shadow:
+        0 30px 90px rgba(2, 4, 10, 0.6),
         inset 0 1px 0 rgba(255, 255, 255, 0.05);
     overflow: hidden;
 }
@@ -686,9 +774,95 @@ body.settings-open {
 
 .settings-details__header {
     display: flex;
-    justify-content: space-between;
     align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+/* Note editor modal header */
+.note-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
     gap: 16px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background:
+        radial-gradient(
+            260px 90px at 0% 0%,
+            rgba(79, 124, 255, 0.1) 0%,
+            transparent 70%
+        ),
+        linear-gradient(
+            180deg,
+            rgba(23, 26, 38, 0.92) 0%,
+            rgba(20, 23, 36, 0.92) 100%
+        );
+}
+
+.note-modal__header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--text);
+}
+
+.note-modal__subtitle {
+    margin: 4px 0 0 0;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.note-modal__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Note editor modal buttons */
+.note-close-button,
+.note-delete-button {
+    appearance: none;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--text);
+    font-weight: 650;
+    cursor: pointer;
+    transition:
+        background 140ms ease,
+        border-color 140ms ease,
+        transform 80ms ease;
+}
+
+.note-close-button {
+    width: 38px;
+    padding: 0;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.note-close-button:hover,
+.note-delete-button:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: #37405a;
+}
+
+.note-close-button:active,
+.note-delete-button:active {
+    transform: scale(0.98);
+}
+
+.note-delete-button {
+    border-color: rgba(255, 80, 90, 0.35);
+    background: rgba(255, 80, 90, 0.1);
+}
+
+.note-delete-button:hover {
+    border-color: rgba(255, 80, 90, 0.55);
+    background: rgba(255, 80, 90, 0.14);
 }
 .settings-description {
     margin: 6px 0 0;
@@ -798,10 +972,69 @@ body.settings-open {
     transform: scale(0.96);
 }
 
+/* Note editor textarea */
+.note-modal__editor {
+    flex: 1;
+    width: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    padding: 14px 16px;
+    background: rgba(0, 0, 0, 0.1);
+    color: var(--text);
+    font: inherit;
+    line-height: 1.55;
+
+    /* Prevent iOS/Android zoom quirks + make editing smoother */
+    font-size: 16px;
+    -webkit-overflow-scrolling: touch;
+}
+
+.note-modal__editor::placeholder {
+    color: var(--muted);
+}
+
+/* Note editor footer */
+.note-modal__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.note-modal__status {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.note-modal__done {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.note-modal__done--primary {
+    background: rgba(79, 124, 255, 0.18);
+    border-color: rgba(79, 124, 255, 0.45);
+}
+
+.note-modal__done--primary:hover {
+    background: rgba(79, 124, 255, 0.24);
+    border-color: rgba(79, 124, 255, 0.6);
+}
+
 .switch {
     position: relative;
-    display: inline-flex;
-    width: 46px;
+    display: inline-block;
+    width: 42px;
     height: 24px;
 }
 .switch input {

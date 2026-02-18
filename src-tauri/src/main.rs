@@ -25,6 +25,11 @@ struct UpdateNoteRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct DeleteNoteRequest {
+    id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct NoteRecord {
     id: String,
     path: String,
@@ -185,6 +190,21 @@ fn update_note(app: tauri::AppHandle, req: UpdateNoteRequest) -> Result<(), Stri
     Ok(())
 }
 
+#[tauri::command]
+fn delete_note(app: tauri::AppHandle, req: DeleteNoteRequest) -> Result<(), String> {
+    let dir = notes_dir(&app)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create notes dir: {e}"))?;
+
+    let id = sanitize_id(&req.id);
+    let path = note_path(&dir, &id);
+
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Failed to delete note file: {e}")),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn main() {
     tauri::Builder::default()
@@ -192,6 +212,7 @@ pub fn main() {
         .invoke_handler(tauri::generate_handler![
             create_note,
             update_note,
+            delete_note,
             list_notes
         ])
         .setup(|app| {

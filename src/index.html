@@ -2,6 +2,15 @@
 <html lang="en">
     <head>
         <meta charset="utf-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+
+        <!-- Improve Android status bar integration (mainly when running as PWA / WebView) -->
+        <meta name="theme-color" content="#0f1115" />
+        <meta name="color-scheme" content="dark light" />
+
         <title>Note Manager</title>
         <link rel="stylesheet" href="styles.css" />
     </head>
@@ -190,6 +199,73 @@
                         </button>
                     </footer>
                 </div>
+            </div>
+        </section>
+
+        <!-- Note Editor Modal (popup similar to settings modal) -->
+        <div class="note-overlay" data-note-overlay hidden></div>
+        <section
+            class="note-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="note-editor-title"
+            aria-hidden="true"
+            data-note-modal
+        >
+            <div class="note-modal__content" role="document" tabindex="-1">
+                <header class="note-modal__header">
+                    <div>
+                        <h2 id="note-editor-title" data-note-editor-title>
+                            Note
+                        </h2>
+                        <p
+                            class="note-modal__subtitle"
+                            data-note-editor-subtitle
+                        >
+                            Markdown editor (auto-saves)
+                        </p>
+                    </div>
+                    <div class="note-modal__actions">
+                        <button
+                            type="button"
+                            class="note-delete-button"
+                            aria-label="Delete note"
+                            data-note-delete
+                        >
+                            Delete
+                        </button>
+                        <button
+                            type="button"
+                            class="note-close-button"
+                            aria-label="Close note"
+                            data-note-close
+                        >
+                            ×
+                        </button>
+                    </div>
+                </header>
+
+                <textarea
+                    class="note-modal__editor"
+                    data-note-editor
+                    aria-label="Edit note (markdown)"
+                    placeholder="Start typing markdown…"
+                    spellcheck="true"
+                ></textarea>
+
+                <footer class="note-modal__footer">
+                    <span class="note-modal__status" data-note-status>
+                        Saved
+                    </span>
+                    <button
+                        type="button"
+                        class="note-modal__done note-modal__done--primary"
+                        aria-label="Done"
+                        data-note-done
+                    >
+                        Done
+                    </button>
+                </footer>
             </div>
         </section>
 

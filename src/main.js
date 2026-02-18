@@ -9,8 +9,13 @@ const {
   Visibility,
 } = notification;
 
-// Tauri invoke (v2 exposes it on window.__TAURI__.core.invoke)
-const invoke = window.__TAURI__?.core?.invoke;
+// Tauri invoke:
+// - v2 (recommended): window.__TAURI__.core.invoke
+// - some builds / older docs: window.__TAURI__.tauri.invoke
+const invoke =
+  window.__TAURI__?.core?.invoke ??
+  window.__TAURI__?.tauri?.invoke ??
+  window.__TAURI_INVOKE__;
 
 // Ensure a function runs after DOM is ready
 const onDomReady = (fn) => {
@@ -19,6 +24,193 @@ const onDomReady = (fn) => {
   } else {
     fn();
   }
+};
+
+// Note editor modal controller (popup editor like settings modal)
+const initNoteModal = () => {
+  const modal = document.querySelector("[data-note-modal]");
+  const overlay = document.querySelector("[data-note-overlay]");
+  const editor = document.querySelector("[data-note-editor]");
+  const titleEl = document.querySelector("[data-note-editor-title]");
+  const subtitleEl = document.querySelector("[data-note-editor-subtitle]");
+  const statusEl = document.querySelector("[data-note-status]");
+  const closeBtn = document.querySelector("[data-note-close]");
+  const doneBtn = document.querySelector("[data-note-done]");
+  const deleteBtn = document.querySelector("[data-note-delete]");
+
+  const setStatus = (text) => {
+    if (statusEl) statusEl.textContent = text;
+  };
+
+  const state = {
+    open: false,
+    noteId: null,
+    activeCard: null,
+    escHandler: null,
+    debouncedSave: null,
+    lastSavedValue: "",
+  };
+
+  const persistNow = async () => {
+    if (!state.noteId) return;
+    if (typeof invoke !== "function") return;
+
+    const content = editor?.value ?? "";
+    try {
+      setStatus("Saving…");
+      await invoke("update_note", { req: { id: state.noteId, content } });
+      state.lastSavedValue = content;
+      setStatus("Saved");
+    } catch (err) {
+      console.error("Failed to persist note:", err);
+      setStatus("Save failed");
+    }
+  };
+
+  const requestClose = async () => {
+    await persistNow();
+
+    // Keep the card's cached content in sync so reopening doesn't revert
+    // to the original content passed into openModal.
+    if (state.activeCard && editor) {
+      state.activeCard.dataset.noteContent = editor.value ?? "";
+    }
+
+    closeModal();
+  };
+
+  const onEsc = (e) => {
+    if (e.key === "Escape" && state.open) {
+      requestClose();
+    }
+  };
+
+  const openModal = ({ id, content, card }) => {
+    if (!modal || !overlay || !editor) return;
+
+    state.open = true;
+    state.noteId = id;
+    state.activeCard = card ?? null;
+
+    if (titleEl) titleEl.textContent = firstLineTitle(content);
+    if (subtitleEl)
+      subtitleEl.textContent = `${id}.md • Markdown editor (auto-saves)`;
+
+    editor.value = content ?? "";
+    state.lastSavedValue = editor.value;
+
+    overlay.removeAttribute("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    document.documentElement.classList.add("note-open");
+    document.body.classList.add("note-open");
+
+    setStatus("Saved");
+    editor.focus();
+    editor.selectionStart = editor.value.length;
+    editor.selectionEnd = editor.value.length;
+
+    if (!state.debouncedSave) {
+      state.debouncedSave = debounce(() => {
+        // Avoid pointless writes if nothing changed
+        if ((editor?.value ?? "") === state.lastSavedValue) return;
+        persistNow();
+      }, 400);
+    }
+
+    if (!state.escHandler) {
+      state.escHandler = onEsc;
+      window.addEventListener("keydown", state.escHandler);
+    }
+  };
+
+  const closeModal = () => {
+    if (!modal || !overlay || !editor) return;
+
+    state.open = false;
+
+    overlay.setAttribute("hidden", "");
+    modal.setAttribute("aria-hidden", "true");
+    document.documentElement.classList.remove("note-open");
+    document.body.classList.remove("note-open");
+
+    if (state.escHandler) {
+      window.removeEventListener("keydown", state.escHandler);
+      state.escHandler = null;
+    }
+
+    // Sync card UI + cached content from editor content
+    const card = state.activeCard;
+    if (card) {
+      const title = card.querySelector(".note-title");
+      const preview = card.querySelector(".note-preview");
+      const v = editor.value ?? "";
+      card.dataset.noteContent = v;
+      if (title) title.textContent = firstLineTitle(v);
+      if (preview) preview.textContent = previewText(v);
+      card.focus?.();
+    }
+
+    state.noteId = null;
+    state.activeCard = null;
+  };
+
+  overlay?.addEventListener("click", () => {
+    requestClose();
+  });
+
+  closeBtn?.addEventListener("click", () => {
+    requestClose();
+  });
+
+  doneBtn?.addEventListener("click", () => {
+    requestClose();
+  });
+
+  editor?.addEventListener("input", () => {
+    const v = editor.value ?? "";
+    if (titleEl) titleEl.textContent = firstLineTitle(v);
+
+    // Update cached content immediately so reopening mid-session doesn't revert
+    if (state.activeCard) {
+      state.activeCard.dataset.noteContent = v;
+    }
+
+    if (typeof state.debouncedSave === "function") state.debouncedSave();
+    setStatus("Editing…");
+  });
+
+  editor?.addEventListener("blur", () => {
+    // Persist when leaving the editor, but keep modal open
+    persistNow();
+  });
+
+  deleteBtn?.addEventListener("click", async () => {
+    if (!state.noteId) return;
+
+    if (typeof invoke !== "function") {
+      console.warn("Tauri invoke is not available; cannot delete note.");
+      return;
+    }
+
+    try {
+      // Delete the persisted markdown file in the backend
+      await invoke("delete_note", { req: { id: state.noteId } });
+
+      // Close the modal immediately after delete
+      // (Optionally also remove the card so UI matches filesystem state)
+      state.activeCard?.remove?.();
+      closeModal();
+    } catch (err) {
+      console.error("Failed to delete note:", err);
+      setStatus("Delete failed");
+    }
+  });
+
+  return {
+    openModal,
+    closeModal,
+    persistNow,
+  };
 };
 
 // Helper: call a function if it exists, otherwise no-op
@@ -546,13 +738,14 @@ bootstrapSettingsModal();
     }
   };
 
+  const noteModal = initNoteModal();
+
   const makeCard = ({ id, content = "" }) => {
     const card = document.createElement("article");
     card.className = "note-card";
     card.tabIndex = 0;
     card.dataset.noteId = id;
 
-    // View mode
     const titleEl = document.createElement("h2");
     titleEl.className = "note-title";
     titleEl.textContent = firstLineTitle(content);
@@ -561,85 +754,30 @@ bootstrapSettingsModal();
     previewEl.className = "note-preview";
     previewEl.textContent = previewText(content);
 
-    // Edit mode
-    const editor = document.createElement("textarea");
-    editor.className = "note-editor";
-    editor.value = content;
-    editor.setAttribute("aria-label", "Edit note (markdown)");
-    editor.hidden = true;
-
-    const saveHint = document.createElement("p");
-    saveHint.className = "note-hint";
-    saveHint.innerHTML = `${escapeHtml("Auto-saves after typing.  Esc to close.")}`;
-    saveHint.hidden = true;
-
-    const openEditor = () => {
-      editor.hidden = false;
-      saveHint.hidden = false;
-      titleEl.hidden = true;
-      previewEl.hidden = true;
-
-      editor.focus();
-      // Put cursor at end
-      editor.selectionStart = editor.value.length;
-      editor.selectionEnd = editor.value.length;
+    const openInModal = () => {
+      if (!noteModal) return;
+      noteModal.openModal({ id, content: currentContent(), card });
     };
 
-    const closeEditor = () => {
-      editor.hidden = true;
-      saveHint.hidden = true;
-      titleEl.hidden = false;
-      previewEl.hidden = false;
-
-      const newContent = editor.value ?? "";
-      titleEl.textContent = firstLineTitle(newContent);
-      previewEl.textContent = previewText(newContent);
-      card.focus();
+    const currentContent = () => {
+      // Prefer the freshest content from the card's dataset if available
+      return card.dataset.noteContent ?? content ?? "";
     };
 
-    const debouncedSave = debounce(() => {
-      persistNote(id, editor.value ?? "");
-    }, 400);
+    // Keep a copy so the modal can open without extra backend reads
+    card.dataset.noteContent = content ?? "";
 
-    card.addEventListener("dblclick", openEditor);
+    card.addEventListener("click", openInModal);
+    card.addEventListener("dblclick", openInModal);
     card.addEventListener("keydown", (e) => {
-      // Enter opens editor when card is focused (view mode)
-      if (e.key === "Enter" && editor.hidden) {
+      if (e.key === "Enter") {
         e.preventDefault();
-        openEditor();
+        openInModal();
       }
-    });
-
-    editor.addEventListener("input", () => {
-      debouncedSave();
-      // Live update title/preview while editing
-      const v = editor.value ?? "";
-      titleEl.textContent = firstLineTitle(v);
-      previewEl.textContent = previewText(v);
-    });
-
-    editor.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeEditor();
-      }
-      // Cmd/Ctrl+Enter closes editor
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        closeEditor();
-      }
-    });
-
-    editor.addEventListener("blur", () => {
-      // Persist on blur and return to view mode
-      persistNote(id, editor.value ?? "");
-      closeEditor();
     });
 
     card.appendChild(titleEl);
     card.appendChild(previewEl);
-    card.appendChild(editor);
-    card.appendChild(saveHint);
     return card;
   };
 
@@ -658,7 +796,6 @@ bootstrapSettingsModal();
       // Clear grid before rendering to avoid duplicates if this runs more than once
       grid.innerHTML = "";
 
-      // list_notes already sorts, but keep it deterministic anyway
       notes.forEach((n) => {
         const id = n?.id;
         const content = n?.content ?? "";
@@ -694,17 +831,9 @@ bootstrapSettingsModal();
       const card = makeCard({ id, content });
       grid.prepend(card);
 
-      // Immediately open editor so you can start typing
-      const editor = card.querySelector(".note-editor");
-      if (editor) {
-        editor.hidden = false;
-        const hint = card.querySelector(".note-hint");
-        if (hint) hint.hidden = false;
-        const title = card.querySelector(".note-title");
-        const preview = card.querySelector(".note-preview");
-        if (title) title.hidden = true;
-        if (preview) preview.hidden = true;
-        editor.focus();
+      // Immediately open in modal so you can start typing
+      if (noteModal) {
+        noteModal.openModal({ id, content, card });
       }
     } catch (err) {
       console.error("Failed to create note:", err);
