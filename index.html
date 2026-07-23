@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <!--
+          maximum-scale + user-scalable=no stop the app from behaving like a
+          zoomable web page on Android/iOS. viewport-fit=cover lets us extend
+          under the status bar and use env(safe-area-inset-*) for correct padding.
+        -->
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+        />
+
+        <meta name="theme-color" content="#0f1115" />
+        <meta name="color-scheme" content="dark light" />
+
+        <title>Note Manager</title>
+    </head>
+    <body>
+        <div id="app"></div>
+        <script type="module" src="/src/main.js"></script>
+    </body>
+</html>

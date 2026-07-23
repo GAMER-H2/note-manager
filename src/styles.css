@@ -23,6 +23,18 @@
     /* Mobile ergonomics */
     --tap-min: 44px;
     --fab-size: 56px;
+    --keyboard-height: 0px;
+
+    /* Fixed row height for the note editor's live markdown preview. Must stay
+       constant (not scale with a line's font-size) so heading lines don't
+       grow taller than the plain textarea underneath the caret sits in —
+       otherwise the caret drifts out of vertical sync with the line it's
+       actually on. */
+    --note-line-height: 24.8px;
+
+    /* Shared accent used for live-markdown structural markers (list bullets,
+       numbers, task boxes, blockquote rule, heading text, link labels). */
+    --md-highlight: #8bb0ff;
 }
 
 *,
@@ -32,7 +44,8 @@
 }
 
 html,
-body {
+body,
+#app {
     height: 100%;
 }
 
@@ -41,6 +54,8 @@ html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
     touch-action: manipulation;
+    /* Stop pull-to-refresh / rubber-banding so it feels like a native app */
+    overscroll-behavior: none;
 }
 
 body {
@@ -63,21 +78,41 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 
-    /* App layout */
+    min-height: 100vh;
+    min-height: 100dvh;
+    overscroll-behavior: none;
+
+    /* Native-app feel: no tap flash, no long-press callout, no stray selection */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* Re-enable text selection where it actually matters (the note editor). */
+textarea,
+input,
+[contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+/*
+ * App layout shell.
+ * The grid used to live on <body>; with Vue the whole app mounts inside
+ * #app, so the layout host is this element instead. It's pinned to the
+ * viewport and only the main area scrolls, which reads as a native app.
+ */
+.app-shell {
     display: grid;
-    grid-template-rows: var(--header-height) 1fr;
+    grid-template-rows: auto 1fr;
     grid-template-columns: var(--sidebar-width) 1fr;
     grid-template-areas:
         "header header"
         "sidebar main";
-    gap: 0;
-
-    /* Mobile viewport correctness (avoid 100vh bugs; support safe-area) */
-    min-height: 100vh;
-    min-height: 100dvh;
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
 }
 
 /* Header */
@@ -89,16 +124,26 @@ body {
 
     /*
      * Android/iOS status bar + notch handling:
-     * Make the header include the safe-area inset so content never sits under the status bar.
+     * Include the top safe-area inset so the title/buttons never sit under
+     * the status bar (time, battery, notification icons).
      */
     height: calc(var(--header-height) + env(safe-area-inset-top));
-    padding: env(safe-area-inset-top) 16px 0 16px;
+    padding: env(safe-area-inset-top)
+        calc(16px + env(safe-area-inset-right)) 0
+        calc(16px + env(safe-area-inset-left));
 
     background: linear-gradient(180deg, #171a25 0%, var(--surface) 100%);
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     z-index: 50;
+}
+
+/* Group left header controls (hamburger + title) */
+.header-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .app-title {
@@ -133,19 +178,76 @@ body {
     transform: translateY(0);
 }
 
+/* Hamburger menu button */
+.hamburger-button {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    margin-right: 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        transform 120ms ease;
+
+    /* Arrange bars vertically with even spacing */
+    flex-direction: column;
+    gap: 4px;
+}
+
+.hamburger-button .bar {
+    display: block;
+    width: 18px;
+    height: 2px;
+    background: currentColor;
+    border-radius: 2px;
+    transition:
+        transform 200ms ease,
+        opacity 200ms ease,
+        background-color 200ms ease;
+}
+
+/* Animate hamburger to close (X) when expanded */
+.hamburger-button[aria-expanded="true"] .bar:nth-child(1) {
+    transform: translate(-6px, 12px) rotate(90deg);
+}
+.hamburger-button[aria-expanded="true"] .bar:nth-child(2) {
+    transform: translate(0px, 0px) rotate(90deg);
+}
+.hamburger-button[aria-expanded="true"] .bar:nth-child(3) {
+    transform: translate(6px, -12px) rotate(90deg);
+}
+
+.hamburger-button:hover {
+    background: #23283a;
+    border-color: #37405a;
+    transform: translateY(-1px);
+}
+
+.hamburger-button:active {
+    transform: translateY(0);
+}
+
 /* Sidebar */
 .app-sidebar {
     grid-area: sidebar;
     display: flex;
     flex-direction: column;
     gap: 12px;
-    height: calc(100vh - var(--header-height));
-    height: calc(100dvh - var(--header-height));
     padding: 16px 12px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
     background: linear-gradient(180deg, var(--surface) 0%, #131622 100%);
     border-right: 1px solid var(--border);
-    position: sticky;
-    top: calc(var(--header-height) + env(safe-area-inset-top));
+    overflow: hidden;
+    min-height: 0;
 }
 
 .folder-list {
@@ -245,8 +347,13 @@ body {
 /* Main area */
 .app-main {
     grid-area: main;
+    position: relative; /* positioning context for the FAB */
     padding: 16px;
+    padding-right: calc(16px + env(safe-area-inset-right));
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
     overflow: auto;
+    min-width: 0;
+    -webkit-overflow-scrolling: touch;
 }
 
 .notes-grid {
@@ -254,12 +361,10 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 16px;
     align-content: start;
-
-    /* Prevent horizontal overflow on narrow devices */
     min-width: 0;
 }
 
-/* Empty state (optional, shown when no notes) */
+/* Empty state (shown when no notes) */
 .notes-grid:empty::before {
     content: "No notes yet";
     display: block;
@@ -288,6 +393,7 @@ body {
     border: 1px solid var(--border);
     padding: 14px 14px 12px 14px;
     box-shadow: var(--shadow-1);
+    cursor: pointer;
     transition:
         transform 160ms ease,
         box-shadow 160ms ease,
@@ -312,6 +418,65 @@ body {
     font-size: 13px;
     line-height: 1.5;
     color: var(--muted);
+    white-space: pre-wrap;
+}
+
+/* Floating Add Note button in bottom-right of main */
+.add-note-button {
+    position: absolute;
+    right: calc(20px + env(safe-area-inset-right));
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    width: var(--fab-size);
+    height: var(--fab-size);
+    border-radius: 50%;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-size: 24px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+        0 10px 24px rgba(79, 124, 255, 0.3),
+        var(--shadow-1);
+    cursor: pointer;
+    transition:
+        transform 120ms ease,
+        box-shadow 120ms ease,
+        background 120ms ease,
+        opacity 120ms ease;
+    z-index: 5;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.add-note-button:hover {
+    background: var(--primary-hover);
+    transform: translateY(-1px);
+    box-shadow:
+        0 12px 28px rgba(79, 124, 255, 0.36),
+        var(--shadow-2);
+}
+
+.add-note-button:active {
+    transform: translateY(0);
+}
+
+.add-note-button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+/* Mobile drawer backdrop (rendered only when the drawer is open on mobile) */
+.sidebar-backdrop {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: calc(var(--header-height) + env(safe-area-inset-top));
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 70;
 }
 
 /* Utility: focus styles */
@@ -339,23 +504,33 @@ button:focus-visible,
     }
 }
 
+/* Desktop-only: hamburger collapses the sidebar out of the layout.
+   Scoped to wide screens so it never conflicts with the mobile drawer. */
+@media (min-width: 769px) {
+    .app-shell.sidebar-collapsed {
+        grid-template-columns: 0 1fr;
+    }
+    .app-shell.sidebar-collapsed .app-sidebar {
+        display: none;
+    }
+}
+
 @media (max-width: 768px) {
-    body {
+    .app-shell {
         grid-template-columns: 1fr;
         grid-template-areas:
             "header"
             "main";
     }
 
-    /* Sidebar becomes an overlay drawer (JS already manages overlay behavior) */
+    /* Sidebar becomes an overlay drawer, hidden by default and slid in via
+       the `.open` class (toggled by the hamburger). */
     .app-sidebar {
-        display: flex;
         position: fixed;
         left: 0;
-        top: var(--header-height);
+        top: calc(var(--header-height) + env(safe-area-inset-top));
         bottom: 0;
         width: min(var(--sidebar-width), 88vw);
-        height: auto;
         z-index: 80;
         transform: translateX(-102%);
         transition: transform 220ms ease;
@@ -364,12 +539,13 @@ button:focus-visible,
         padding-bottom: calc(16px + env(safe-area-inset-bottom));
     }
 
-    body:not(.sidebar-collapsed) .app-sidebar {
+    .app-sidebar.open {
         transform: translateX(0);
     }
 
     .app-main {
         padding: 12px;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom));
     }
 
     .notes-grid {
@@ -378,228 +554,83 @@ button:focus-visible,
     }
 }
 
-@media (prefers-color-scheme: light) {
-    :root {
-        --bg: #f6f7fb;
-        --surface: #ffffff;
-        --surface-2: #f3f4f8;
-        --text: #1b2230;
-        --muted: #5e6a85;
-        --border: #e7e9ef;
-    }
-
-    body {
-        background: radial-gradient(
-            1400px 600px at 100% 0%,
-            #eef1f8 0%,
-            var(--bg) 100%
-        );
-    }
-
-    .app-header {
-        background: linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
-        border-bottom-color: var(--border);
-    }
-
-    .app-sidebar {
-        background: linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
-        border-right-color: var(--border);
-    }
-
-    .folder-button,
-    .settings-button,
-    .add-folder-button {
-        border-color: var(--border);
-    }
-
-    .note-card {
-        background:
-            radial-gradient(
-                220px 80px at 0% 0%,
-                rgba(79, 124, 255, 0.08) 0%,
-                transparent 70%
-            ),
-            linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
-        border-color: var(--border);
-    }
-
-    .notes-grid:empty::before {
-        background: #f8f9fd;
-        border-color: var(--border);
-        color: #7783a1;
-    }
+/* Light theme ("Blinding White"), selected in Settings → Appearance.
+   Applied via data-theme="light" on <html>. Dark is the default in :root. */
+[data-theme="light"] {
+    --bg: #f6f7fb;
+    --surface: #ffffff;
+    --surface-2: #f3f4f8;
+    --text: #1b2230;
+    --muted: #5e6a85;
+    --border: #e7e9ef;
 }
 
-/* Hamburger menu button */
-.hamburger-button {
-    appearance: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    margin-right: 8px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    cursor: pointer;
-    transition:
-        background 120ms ease,
-        border-color 120ms ease,
-        transform 120ms ease;
-
-    /* Arrange bars vertically with even spacing */
-    flex-direction: column;
-    gap: 4px; /* controls distance between bars */
+[data-theme="light"] body {
+    background: radial-gradient(
+        1400px 600px at 100% 0%,
+        #eef1f8 0%,
+        var(--bg) 100%
+    );
 }
 
-/* Simple hamburger icon using bars */
-.hamburger-button .bar {
-    display: block;
-    width: 18px;
-    height: 2px;
-    /* margin: 2px 0;  <-- not needed anymore */
-    background: currentColor;
-    border-radius: 2px;
-    transition:
-        transform 200ms ease,
-        opacity 200ms ease,
-        background-color 200ms ease;
+[data-theme="light"] .app-header {
+    background: linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
+    border-bottom-color: var(--border);
 }
 
-/* Animate hamburger to close (X) when expanded */
-.hamburger-button[aria-expanded="true"] .bar:nth-child(1) {
-    transform: translate(-6px, 12px) rotate(90deg);
-}
-.hamburger-button[aria-expanded="true"] .bar:nth-child(2) {
-    transform: translate(0px, 0px) rotate(90deg);
-}
-.hamburger-button[aria-expanded="true"] .bar:nth-child(3) {
-    transform: translate(6px, -12px) rotate(90deg);
+[data-theme="light"] .app-sidebar {
+    background: linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
+    border-right-color: var(--border);
 }
 
-.hamburger-button:hover {
-    background: #23283a;
-    border-color: #37405a;
-    transform: translateY(-1px);
+[data-theme="light"] .folder-button,
+[data-theme="light"] .settings-button,
+[data-theme="light"] .add-folder-button,
+[data-theme="light"] .hamburger-button {
+    border-color: var(--border);
 }
 
-.hamburger-button:active {
-    transform: translateY(0);
+[data-theme="light"] .note-card {
+    background:
+        radial-gradient(
+            220px 80px at 0% 0%,
+            rgba(79, 124, 255, 0.08) 0%,
+            transparent 70%
+        ),
+        linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
+    border-color: var(--border);
 }
 
-/* Positioning: place hamburger at the start of header content */
-.app-header {
-    grid-area: header;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: var(--header-height);
-    padding: 0 16px;
-    background: linear-gradient(180deg, #171a25 0%, var(--surface) 100%);
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 50;
+[data-theme="light"] .notes-grid:empty::before {
+    background: #f8f9fd;
+    border-color: var(--border);
+    color: #7783a1;
 }
 
-/* Optional: group left header controls (hamburger + title) */
-.header-left {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
+/* Light theme: surfaces inside the modals that use hard-coded dark values. */
+[data-theme="light"] .settings-categories {
+    background: linear-gradient(180deg, #f7f8fb 0%, #eef1f7 100%);
+    border-right-color: var(--border);
+}
+[data-theme="light"] .note-modal__header {
+    background: linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
+}
+[data-theme="light"] .note-modal__editor-shell {
+    background: #fbfcfe;
+}
+[data-theme="light"] .md-inline-code {
+    background: #eef2ff;
+}
+[data-theme="light"] .note-modal__footer,
+[data-theme="light"] .reminder-modal__footer,
+[data-theme="light"] .settings-modal__footer {
+    background: #f7f8fb;
+}
+[data-theme="light"] .switch .slider {
+    background-color: #c7cede;
 }
 
-/* Collapsed sidebar state
-   Add class 'sidebar-collapsed' to the body to collapse the sidebar.
-*/
-body.sidebar-collapsed {
-    grid-template-columns: 0 1fr;
-}
-
-body.sidebar-collapsed .app-sidebar {
-    display: none;
-}
-
-/* When collapsed, add a slight left padding to main to keep content comfortable */
-body.sidebar-collapsed .app-main {
-    padding-left: 16px;
-}
-
-/* Light mode tweaks for hamburger */
-@media (prefers-color-scheme: light) {
-    .hamburger-button {
-        border-color: var(--border);
-        background: var(--surface-2);
-        color: var(--text);
-    }
-}
-
-/* Floating Add Note button in bottom-right of main */
-.app-main {
-    position: relative; /* make main a positioning context */
-    min-width: 0; /* helps grid/flex children not force overflow on mobile */
-}
-
-.add-note-button {
-    position: absolute;
-    right: calc(20px + env(safe-area-inset-right));
-    bottom: calc(20px + env(safe-area-inset-bottom));
-    width: var(--fab-size);
-    height: var(--fab-size);
-    border-radius: 50%;
-    border: none;
-    background: var(--primary);
-    color: #fff;
-    font-size: 24px;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow:
-        0 10px 24px rgba(79, 124, 255, 0.3),
-        var(--shadow-1);
-    cursor: pointer;
-    transition:
-        transform 120ms ease,
-        box-shadow 120ms ease,
-        background 120ms ease,
-        opacity 120ms ease;
-    z-index: 5;
-
-    /* Better touch feedback on mobile */
-    -webkit-tap-highlight-color: transparent;
-}
-
-.add-note-button:hover {
-    background: var(--primary-hover);
-    transform: translateY(-1px);
-    box-shadow:
-        0 12px 28px rgba(79, 124, 255, 0.36),
-        var(--shadow-2);
-}
-
-.add-note-button:active {
-    transform: translateY(0);
-}
-
-.add-note-button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 3px;
-}
-
-@media (max-width: 768px) {
-    .add-note-button {
-        right: calc(16px + env(safe-area-inset-right));
-        bottom: calc(16px + env(safe-area-inset-bottom));
-        width: 52px;
-        height: 52px;
-    }
-}
-
-/* Settings modal */
+/* ===================== Settings modal ===================== */
 .settings-overlay {
     position: fixed;
     inset: 0;
@@ -621,11 +652,10 @@ body.sidebar-collapsed .app-main {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 18px;
-    padding-bottom: calc(18px + env(safe-area-inset-bottom));
-    padding-left: calc(18px + env(safe-area-inset-left));
-    padding-right: calc(18px + env(safe-area-inset-right));
-    padding-top: calc(18px + env(safe-area-inset-top));
+    padding: calc(18px + env(safe-area-inset-top))
+        calc(18px + env(safe-area-inset-right))
+        calc(18px + env(safe-area-inset-bottom))
+        calc(18px + env(safe-area-inset-left));
     z-index: 95;
     opacity: 0;
     pointer-events: none;
@@ -656,68 +686,6 @@ body.settings-open {
     border: 1px solid rgba(255, 255, 255, 0.04);
     box-shadow:
         0 30px 80px rgba(2, 4, 10, 0.55),
-        inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    overflow: hidden;
-}
-
-/* Note editor modal */
-.note-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(6, 7, 10, 0.72);
-    backdrop-filter: blur(3px);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 180ms ease;
-    z-index: 90;
-}
-.note-overlay:not([hidden]) {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.note-modal {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 18px;
-    padding-bottom: calc(18px + env(safe-area-inset-bottom));
-    padding-left: calc(18px + env(safe-area-inset-left));
-    padding-right: calc(18px + env(safe-area-inset-right));
-    padding-top: calc(18px + env(safe-area-inset-top));
-    z-index: 95;
-    opacity: 0;
-    pointer-events: none;
-    transition:
-        opacity 180ms ease,
-        transform 220ms ease;
-    transform: translateY(12px) scale(0.98);
-}
-
-.note-modal[aria-hidden="false"] {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0) scale(1);
-}
-
-html.note-open,
-body.note-open {
-    overflow: hidden;
-}
-
-/* Big editor surface */
-.note-modal__content {
-    width: min(980px, 100%);
-    height: min(760px, 92vh);
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border-radius: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    box-shadow:
-        0 30px 90px rgba(2, 4, 10, 0.6),
         inset 0 1px 0 rgba(255, 255, 255, 0.05);
     overflow: hidden;
 }
@@ -760,12 +728,12 @@ body.note-open {
     color: var(--text);
 }
 
+/* Details pane: fixed header, scrolling middle, pinned footer. */
 .settings-details {
-    padding: 28px 32px 24px;
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    overflow-y: auto;
+    min-height: 0;
+    overflow: hidden;
 }
 .settings-details header h3 {
     margin: 0;
@@ -777,96 +745,49 @@ body.note-open {
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
+    padding: 28px 32px 16px;
 }
 
-/* Note editor modal header */
-.note-modal__header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
-    background:
-        radial-gradient(
-            260px 90px at 0% 0%,
-            rgba(79, 124, 255, 0.1) 0%,
-            transparent 70%
-        ),
-        linear-gradient(
-            180deg,
-            rgba(23, 26, 38, 0.92) 0%,
-            rgba(20, 23, 36, 0.92) 100%
-        );
+/* The only scrolling region, so the footer never scrolls out of reach. */
+.settings-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 32px 24px;
 }
 
-.note-modal__header h2 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 650;
-    color: var(--text);
-}
-
-.note-modal__subtitle {
-    margin: 4px 0 0 0;
-    font-size: 12px;
-    color: var(--muted);
-}
-
-.note-modal__actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-/* Note editor modal buttons */
-.note-close-button,
-.note-delete-button {
-    appearance: none;
-    height: 34px;
-    padding: 0 12px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
-    color: var(--text);
-    font-weight: 650;
-    cursor: pointer;
-    transition:
-        background 140ms ease,
-        border-color 140ms ease,
-        transform 80ms ease;
-}
-
-.note-close-button {
-    width: 38px;
-    padding: 0;
-    font-size: 18px;
-    line-height: 1;
-}
-
-.note-close-button:hover,
-.note-delete-button:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: #37405a;
-}
-
-.note-close-button:active,
-.note-delete-button:active {
-    transform: scale(0.98);
-}
-
-.note-delete-button {
-    border-color: rgba(255, 80, 90, 0.35);
-    background: rgba(255, 80, 90, 0.1);
-}
-
-.note-delete-button:hover {
-    border-color: rgba(255, 80, 90, 0.55);
-    background: rgba(255, 80, 90, 0.14);
-}
 .settings-description {
     margin: 6px 0 0;
     color: var(--muted);
+}
+
+.settings-select {
+    appearance: none;
+    min-width: 160px;
+    height: 40px;
+    padding: 0 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+}
+.settings-select:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+
+/* Stacked variant for rows whose control is a wide dropdown. */
+.settings-toggle--stack {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+}
+.settings-toggle.is-disabled {
+    opacity: 0.6;
 }
 
 .settings-toggle-list {
@@ -911,6 +832,9 @@ body.note-open {
     display: flex;
     justify-content: flex-end;
     gap: 12px;
+    padding: 16px 32px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.08);
 }
 .settings-primary,
 .settings-secondary {
@@ -972,70 +896,13 @@ body.note-open {
     transform: scale(0.96);
 }
 
-/* Note editor textarea */
-.note-modal__editor {
-    flex: 1;
-    width: 100%;
-    border: none;
-    outline: none;
-    resize: none;
-    padding: 14px 16px;
-    background: rgba(0, 0, 0, 0.1);
-    color: var(--text);
-    font: inherit;
-    line-height: 1.55;
-
-    /* Prevent iOS/Android zoom quirks + make editing smoother */
-    font-size: 16px;
-    -webkit-overflow-scrolling: touch;
-}
-
-.note-modal__editor::placeholder {
-    color: var(--muted);
-}
-
-/* Note editor footer */
-.note-modal__footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.08);
-}
-
-.note-modal__status {
-    font-size: 12px;
-    color: var(--muted);
-}
-
-.note-modal__done {
-    height: 36px;
-    padding: 0 14px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text);
-    font-weight: 650;
-    cursor: pointer;
-}
-
-.note-modal__done--primary {
-    background: rgba(79, 124, 255, 0.18);
-    border-color: rgba(79, 124, 255, 0.45);
-}
-
-.note-modal__done--primary:hover {
-    background: rgba(79, 124, 255, 0.24);
-    border-color: rgba(79, 124, 255, 0.6);
-}
-
+/* Toggle switch */
 .switch {
     position: relative;
     display: inline-block;
     width: 42px;
     height: 24px;
+    flex: none;
 }
 .switch input {
     opacity: 0;
@@ -1068,13 +935,19 @@ body.note-open {
     transform: translateX(20px);
 }
 
+/* Settings modal: mobile becomes a full-screen, scrollable page */
 @media (max-width: 720px) {
     .settings-modal {
-        padding: 16px;
+        padding: 0;
     }
     .settings-modal__content {
+        position: relative;
+        width: 100%;
+        height: 100dvh;
+        max-height: none;
+        border-radius: 0;
         grid-template-columns: 1fr;
-        max-height: 92vh;
+        grid-template-rows: auto 1fr;
     }
     .settings-categories {
         border-right: none;
@@ -1082,18 +955,661 @@ body.note-open {
         flex-direction: row;
         flex-wrap: wrap;
         gap: 10px;
+        /* Reserve top space for the safe area and right space for the close
+           button, which is pinned to the top-right corner on mobile. */
+        padding: calc(18px + env(safe-area-inset-top)) 56px 0 20px;
+    }
+    .settings-categories h2 {
+        flex-basis: 100%;
     }
     .settings-categories nav {
         display: contents;
+    }
+    /* The close button lives inside the details pane in the DOM; on mobile the
+       details pane is the second row, so pin the button to the top-right of the
+       whole modal instead of letting it sit halfway down the screen. */
+    .settings-close-button {
+        position: absolute;
+        top: calc(14px + env(safe-area-inset-top));
+        right: 14px;
+        z-index: 3;
+    }
+    /* Details fills the second row; only .settings-scroll scrolls, so the
+       Apply/Cancel footer stays pinned to the bottom of the screen. */
+    .settings-details {
+        min-height: 0;
+        overflow: hidden;
     }
     .settings-toggle {
         flex-direction: column;
         align-items: flex-start;
     }
+    .settings-select {
+        width: 100%;
+    }
     .settings-modal__footer {
         flex-direction: column-reverse;
+        padding-bottom: calc(16px + env(safe-area-inset-bottom));
     }
     .settings-modal__footer button {
         width: 100%;
+    }
+}
+
+/* ===================== Note editor modal ===================== */
+.note-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 7, 10, 0.72);
+    backdrop-filter: blur(3px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    z-index: 90;
+}
+.note-overlay:not([hidden]) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.note-modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(18px + env(safe-area-inset-top))
+        calc(18px + env(safe-area-inset-right))
+        calc(18px + env(safe-area-inset-bottom))
+        calc(18px + env(safe-area-inset-left));
+    z-index: 95;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 180ms ease,
+        transform 220ms ease;
+    transform: translateY(12px) scale(0.98);
+}
+
+.note-modal[aria-hidden="false"] {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+html.note-open,
+body.note-open {
+    overflow: hidden;
+}
+
+.note-modal__content {
+    position: relative;
+    width: min(980px, 100%);
+    height: min(760px, 92vh);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    box-shadow:
+        0 30px 90px rgba(2, 4, 10, 0.6),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.note-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background:
+        radial-gradient(
+            260px 90px at 0% 0%,
+            rgba(79, 124, 255, 0.1) 0%,
+            transparent 70%
+        ),
+        linear-gradient(
+            180deg,
+            rgba(23, 26, 38, 0.92) 0%,
+            rgba(20, 23, 36, 0.92) 100%
+        );
+}
+
+.note-modal__header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--text);
+}
+
+.note-modal__subtitle {
+    margin: 4px 0 0 0;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.note-modal__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.note-close-button,
+.note-delete-button,
+.note-reminder-button,
+.note-actions-button {
+    appearance: none;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--text);
+    font-weight: 650;
+    cursor: pointer;
+    transition:
+        background 140ms ease,
+        border-color 140ms ease,
+        transform 80ms ease;
+}
+
+.note-reminder-button:hover,
+.note-actions-button:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: #37405a;
+}
+
+.note-reminder-button:active,
+.note-actions-button:active {
+    transform: scale(0.98);
+}
+
+/* Accent styling when a reminder is already set on the note. */
+.note-reminder-button.is-active {
+    border-color: rgba(255, 200, 87, 0.5);
+    background: rgba(255, 200, 87, 0.14);
+    color: var(--accent);
+}
+
+.note-close-button,
+.note-actions-button {
+    width: 38px;
+    padding: 0;
+    line-height: 1;
+}
+
+.note-close-button {
+    font-size: 18px;
+}
+
+.note-actions-button {
+    font-size: 24px;
+}
+
+.note-close-button:hover,
+.note-delete-button:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: #37405a;
+}
+
+.note-close-button:active,
+.note-delete-button:active {
+    transform: scale(0.98);
+}
+
+.note-delete-button {
+    border-color: rgba(255, 80, 90, 0.35);
+    background: rgba(255, 80, 90, 0.1);
+}
+
+.note-delete-button:hover {
+    border-color: rgba(255, 80, 90, 0.55);
+    background: rgba(255, 80, 90, 0.14);
+}
+
+.note-modal__editor-shell {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.note-modal__preview,
+.note-modal__editor {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    padding: 14px 16px;
+    font: inherit;
+    font-size: 16px;
+    /* Fixed (not em-relative) so a line's font-size can change without
+       changing how much vertical space the line occupies. */
+    line-height: var(--note-line-height);
+    white-space: pre-wrap;
+    word-break: break-word;
+    tab-size: 4;
+}
+
+.note-modal__preview {
+    overflow: auto;
+    pointer-events: none;
+    color: var(--text);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+
+.note-modal__preview::-webkit-scrollbar {
+    display: none;
+}
+
+.note-modal__preview-line {
+    /* Inline, not block — the newline characters between spans (joined in
+       the script) are what create line breaks, exactly like they do in the
+       plain-text textarea underneath. This avoids each line being its own
+       independently-rounded block box, which is what caused the drift to
+       compound the more lines a note had. */
+    display: inline;
+    border-radius: 4px;
+}
+
+.md-line--blank {
+    opacity: 0;
+}
+
+.md-line--heading {
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--md-highlight);
+}
+
+.md-line--quote {
+    color: #d4d9e8;
+}
+
+.md-line--fence,
+.md-line--code,
+.md-inline-code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.md-line--code,
+.md-inline-code {
+    color: #c7d7ff;
+}
+
+.md-inline-code {
+    padding: 0.08em 0.32em;
+    border-radius: 6px;
+    background: rgba(79, 124, 255, 0.14);
+}
+
+.md-strong {
+    font-weight: 750;
+}
+
+.md-em {
+    font-style: italic;
+}
+
+.md-strike {
+    text-decoration: line-through;
+    opacity: 0.88;
+}
+
+.md-link-label {
+    color: var(--md-highlight);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.md-syntax {
+    color: var(--muted);
+    opacity: 0.9;
+}
+
+.md-list-bullet,
+.md-list-number,
+.md-task-box,
+.md-quote-marker {
+    color: var(--md-highlight);
+    font-weight: 700;
+}
+
+.note-modal__editor {
+    border: none;
+    outline: none;
+    resize: none;
+    overflow: auto;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+    -webkit-overflow-scrolling: touch;
+}
+
+.note-modal__editor::selection {
+    background: rgba(79, 124, 255, 0.28);
+}
+
+.note-modal__editor::placeholder {
+    color: var(--muted);
+}
+
+.note-modal__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.note-modal__status {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.note-modal__footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+}
+
+.note-modal__done {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.note-modal__done:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.note-modal__done--primary {
+    background: rgba(79, 124, 255, 0.18);
+    border-color: rgba(79, 124, 255, 0.45);
+}
+
+.note-modal__done--primary:hover {
+    background: rgba(79, 124, 255, 0.24);
+    border-color: rgba(79, 124, 255, 0.6);
+}
+
+/* Note editor: mobile becomes a full-screen page */
+.note-actions-menu__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(6, 7, 10, 0.14);
+    z-index: 4;
+}
+
+.note-actions-menu {
+    position: absolute;
+    top: calc(58px + env(safe-area-inset-top));
+    right: 14px;
+    z-index: 5;
+    min-width: 180px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow:
+        0 18px 44px rgba(2, 4, 10, 0.46),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.note-actions-menu__item {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 46px;
+    padding: 0 14px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text);
+    font: inherit;
+    font-weight: 650;
+    text-align: left;
+    cursor: pointer;
+}
+
+.note-actions-menu__item:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.note-actions-menu__item.is-active {
+    color: var(--accent);
+    background: rgba(255, 200, 87, 0.12);
+    border-color: rgba(255, 200, 87, 0.2);
+}
+
+.note-actions-menu__item--danger {
+    color: var(--danger);
+}
+
+.note-actions-menu__item--danger:hover {
+    background: rgba(255, 80, 90, 0.12);
+    border-color: rgba(255, 80, 90, 0.16);
+}
+
+@media (max-width: 720px) {
+    .note-modal {
+        padding: 0;
+    }
+    .note-modal__content {
+        width: 100%;
+        height: 100dvh;
+        max-height: none;
+        border-radius: 0;
+    }
+    .note-modal__header {
+        padding-top: calc(14px + env(safe-area-inset-top));
+    }
+    .note-modal__footer {
+        flex-wrap: wrap;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom) + var(--keyboard-height));
+    }
+    .note-modal__status {
+        width: 100%;
+    }
+    .note-modal__footer-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+}
+
+/* ===================== Reminder modal ===================== */
+/* Layered above the note editor (which is z-index 90/95). */
+.reminder-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 7, 10, 0.72);
+    backdrop-filter: blur(3px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    z-index: 100;
+}
+.reminder-overlay:not([hidden]) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.reminder-modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(18px + env(safe-area-inset-top))
+        calc(18px + env(safe-area-inset-right))
+        calc(18px + env(safe-area-inset-bottom))
+        calc(18px + env(safe-area-inset-left));
+    z-index: 105;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 180ms ease,
+        transform 220ms ease;
+    transform: translateY(12px) scale(0.98);
+}
+
+.reminder-modal[aria-hidden="false"] {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+.reminder-modal__content {
+    position: relative;
+    width: min(520px, 100%);
+    max-height: min(560px, 92vh);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    box-shadow:
+        0 30px 90px rgba(2, 4, 10, 0.6),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.reminder-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.reminder-modal__header h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 650;
+    color: var(--text);
+}
+
+.reminder-modal__subtitle {
+    margin: 4px 0 0 0;
+    font-size: 13px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 340px;
+}
+
+.reminder-modal__body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    overflow-y: auto;
+}
+
+.reminder-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reminder-field__label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+.reminder-input {
+    appearance: none;
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 16px; /* avoid mobile focus zoom */
+}
+
+.reminder-input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+
+.reminder-summary {
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    background: rgba(79, 124, 255, 0.1);
+    border: 1px solid rgba(79, 124, 255, 0.25);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.reminder-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 13px;
+}
+
+.reminder-modal__footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.reminder-footer-spacer {
+    flex: 1;
+}
+
+.reminder-modal__footer button:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+/* Reminder modal: mobile becomes a full-screen page */
+@media (max-width: 720px) {
+    .reminder-modal {
+        padding: 0;
+    }
+    .reminder-modal__content {
+        width: 100%;
+        height: 100dvh;
+        max-height: none;
+        border-radius: 0;
+    }
+    .reminder-modal__header {
+        padding-top: calc(18px + env(safe-area-inset-top));
+    }
+    .reminder-modal__subtitle {
+        max-width: 70vw;
+    }
+    .reminder-modal__body {
+        flex: 1;
+    }
+    .reminder-modal__footer {
+        padding-bottom: calc(14px + env(safe-area-inset-bottom));
+        flex-wrap: wrap;
     }
 }
