@@ -2,6 +2,9 @@
 import { computed, ref, watch } from "vue";
 import { useOverlayHistory } from "../composables/useOverlayHistory.js";
 import { useReminders } from "../composables/useReminders.js";
+import { URGENCY_LEVELS } from "../composables/useNotifications.js";
+import { useSettings } from "../composables/useSettings.js";
+import { isAndroid } from "../lib/platform.js";
 import { firstLineTitle } from "../lib/notes.js";
 
 const props = defineProps({
@@ -16,11 +19,15 @@ const { requestClose } = useOverlayHistory(
   closeModal,
 );
 
-const { getReminder, saveReminder, removeReminder, REPEAT_OPTIONS } =
+const { getReminder, saveReminder, removeReminder, REPEAT_OPTIONS, BODY_MODES } =
   useReminders();
+const { settings } = useSettings();
+const androidOnly = isAndroid();
 
 const localAt = ref("");
 const localRepeat = ref("none");
+const localUrgency = ref("default");
+const localBodyMode = ref("full");
 const busy = ref(false);
 const error = ref("");
 
@@ -77,6 +84,8 @@ watch(
     const cfg = existing.value;
     localAt.value = cfg?.at || defaultAt();
     localRepeat.value = cfg?.repeat || "none";
+    localUrgency.value = cfg?.urgency || settings.urgency;
+    localBodyMode.value = cfg?.bodyMode || "full";
   },
 );
 
@@ -88,6 +97,8 @@ const onSave = async () => {
     await saveReminder(props.note, {
       at: localAt.value,
       repeat: localRepeat.value,
+      urgency: localUrgency.value,
+      bodyMode: localBodyMode.value,
     });
     requestClose();
   } catch (e) {
@@ -157,6 +168,39 @@ const onRemove = async () => {
               :value="opt.value"
             >
               {{ opt.label }}
+            </option>
+          </select>
+        </label>
+
+        <label class="reminder-field" :class="{ 'is-disabled': !androidOnly }">
+          <span class="reminder-field__label">Priority</span>
+          <select
+            class="reminder-input"
+            v-model="localUrgency"
+            :disabled="!androidOnly"
+          >
+            <option
+              v-for="level in URGENCY_LEVELS"
+              :key="level.value"
+              :value="level.value"
+            >
+              {{ level.label }}
+            </option>
+          </select>
+        </label>
+        <p v-if="!androidOnly" class="reminder-hint">
+          Android only — not configurable on desktop.
+        </p>
+
+        <label class="reminder-field">
+          <span class="reminder-field__label">Show in notification</span>
+          <select class="reminder-input" v-model="localBodyMode">
+            <option
+              v-for="mode in BODY_MODES"
+              :key="mode.value"
+              :value="mode.value"
+            >
+              {{ mode.label }}
             </option>
           </select>
         </label>

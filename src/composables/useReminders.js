@@ -22,7 +22,15 @@ export const REPEAT_OPTIONS = [
   { value: "yearly", label: "Yearly" },
 ];
 
-// Shared, module-level store: noteId -> { enabled, notificationId, at, repeat }.
+// How much of the note is revealed in the notification itself.
+export const BODY_MODES = [
+  { value: "full", label: "Title and body" },
+  { value: "titleOnly", label: "Title only" },
+  { value: "generic", label: 'Generic ("1 new reminder")' },
+];
+
+// Shared, module-level store:
+// noteId -> { enabled, notificationId, at, repeat, urgency, bodyMode }.
 // `at` is a datetime-local string ("YYYY-MM-DDTHH:mm") in the user's local time.
 const reminders = reactive({});
 let loaded = false;
@@ -123,10 +131,14 @@ const scheduleReminderNotification = async (
   }
 
   // Make sure the channel for the chosen urgency exists so Android doesn't
-  // silently drop the notification.
+  // silently drop the notification. Falls back to the global default urgency
+  // for reminders saved before per-reminder urgency existed.
   const { settings } = useSettings();
-  const channelId = await ensureReminderChannel(settings.urgency);
-  const id = cfg.notificationId ?? reminders[note.id]?.notificationId ?? hashId(note.id);
+  const existing = reminders[note.id];
+  const urgency = cfg.urgency ?? existing?.urgency ?? settings.urgency;
+  const bodyMode = cfg.bodyMode ?? existing?.bodyMode ?? "full";
+  const channelId = await ensureReminderChannel(urgency);
+  const id = cfg.notificationId ?? existing?.notificationId ?? hashId(note.id);
 
   // Clear any previously scheduled notification for this note.
   try {
@@ -135,17 +147,41 @@ const scheduleReminderNotification = async (
     console.warn("cancel before reschedule failed (may be none):", e);
   }
 
-  const nextCfg = { enabled: true, notificationId: id, at: cfg.at, repeat: cfg.repeat };
-  const title = notificationTitle(note.content);
-  const body = notificationBody(note.content);
+  const nextCfg = {
+    enabled: true,
+    notificationId: id,
+    at: cfg.at,
+    repeat: cfg.repeat,
+    urgency,
+    bodyMode,
+  };
+
+  let title;
+  let body;
+  switch (bodyMode) {
+    case "generic":
+      title = "1 new reminder";
+      body = undefined;
+      break;
+    case "titleOnly":
+      title = notificationTitle(note.content);
+      body = undefined;
+      break;
+    case "full":
+    default:
+      title = notificationTitle(note.content);
+      body = notificationBody(note.content) || undefined;
+      break;
+  }
 
   await sendNotification({
     id,
     title,
-    body: body || undefined,
-    largeBody: body || undefined,
+    body,
+    largeBody: body,
     channelId,
     schedule: buildSchedule(nextCfg),
+    extra: { noteId: note.id },
   });
 
   reminders[note.id] = nextCfg;
@@ -173,13 +209,15 @@ export function useReminders() {
 
   // Schedule (or reschedule) a reminder for a note. `note` must carry the
   // latest content so the notification text is current.
-  const saveReminder = async (note, { at, repeat }) =>
+  const saveReminder = async (note, { at, repeat, urgency, bodyMode }) =>
     scheduleReminderNotification(
       note,
       {
         notificationId: reminders[note.id]?.notificationId,
         at,
         repeat,
+        urgency,
+        bodyMode,
       },
       { promptForPermission: true },
     );
@@ -265,5 +303,6 @@ export function useReminders() {
     rescheduleAllReminders,
     removeReminder,
     REPEAT_OPTIONS,
+    BODY_MODES,
   };
 }

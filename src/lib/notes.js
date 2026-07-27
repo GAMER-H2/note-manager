@@ -38,7 +38,23 @@ const escapeHtml = (value) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+// Inverse of escapeHtml, to recover the true raw text of a regex capture from
+// an already-escaped string (order matters: undo the specific entities before
+// `&amp;`, mirroring the reverse of how escapeHtml applies them).
+const unescapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+
 const syntax = (value) => `<span class="md-syntax">${escapeHtml(value)}</span>`;
+
+// A link target with an explicit scheme (https:, mailto:, ...) is treated as a
+// normal external link; anything else is a `folderPath/noteTitle` reference to
+// another note within the app.
+const LINK_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 
 const renderInlineMarkdownHTML = (value) => {
   let html = escapeHtml(value);
@@ -49,11 +65,18 @@ const renderInlineMarkdownHTML = (value) => {
       `${syntax("![")}<span class="md-link-label">${alt}</span>${syntax(`](${url})`)}`,
   );
 
-  html = html.replace(
-    /\[([^\]]+)\]\(([^)]*)\)/g,
-    (_match, label, url) =>
-      `${syntax("[")}<span class="md-link-label">${label}</span>${syntax(`](${url})`)}`,
-  );
+  html = html.replace(/\[([^\]]+)\]\(([^)]*)\)/g, (_match, label, url) => {
+    const rawUrl = unescapeHtml(url).trim();
+    if (!rawUrl || LINK_SCHEME_RE.test(rawUrl)) {
+      return `${syntax("[")}<span class="md-link-label">${label}</span>${syntax(`](${url})`)}`;
+    }
+    const target = encodeURIComponent(rawUrl);
+    return (
+      `${syntax("[")}` +
+      `<span class="md-link-label md-note-link" data-note-link="${target}">${label}</span>` +
+      `${syntax(`](${url})`)}`
+    );
+  });
 
   html = html.replace(
     /`([^`]+)`/g,

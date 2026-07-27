@@ -7,8 +7,11 @@ import {
 } from "../lib/notes.js";
 import { useReminders } from "../composables/useReminders.js";
 import { useSettings } from "../composables/useSettings.js";
+import { useFolders } from "../composables/useFolders.js";
+import { usePinned } from "../composables/usePinned.js";
 import { initVisualViewport } from "../composables/useVisualViewport.js";
 import { useOverlayHistory } from "../composables/useOverlayHistory.js";
+import { isAndroid } from "../lib/platform.js";
 import ReminderModal from "./ReminderModal.vue";
 
 const props = defineProps({
@@ -18,18 +21,33 @@ const props = defineProps({
   save: { type: Function, required: true },
   // async (id) => void — deletes the note in the backend.
   remove: { type: Function, required: true },
+  // async (id, folder) => void — moves the note to another folder.
+  moveNote: { type: Function, required: true },
+  // (folderPath, title) => boolean — opens a note referenced by a markdown
+  // link, returning whether a match was found.
+  openLink: { type: Function, required: true },
 });
 
 const emit = defineEmits(["close"]);
 
 const { getReminder, refreshReminder } = useReminders();
 const { settings } = useSettings();
+const { realFolders } = useFolders();
+const { isPinned, togglePin } = usePinned();
 
 const reminderOpen = ref(false);
 const mobileActionsOpen = ref(false);
 const hasReminder = computed(() =>
   props.note ? !!getReminder(props.note.id) : false,
 );
+const noteFolder = computed(() => props.note?.folder || "General");
+const pinned = computed(() => (props.note ? isPinned(props.note.id) : false));
+
+// Note-link clicks navigate on a plain tap on Android; on desktop they require
+// Ctrl/Cmd+click, since the preview is a syntax-highlighted overlay (not real
+// rendered HTML) and a plain click needs to keep placing the cursor normally.
+const androidPlatform = isAndroid();
+let notFoundTimeout = null;
 
 const editor = ref(null);
 const preview = ref(null);
@@ -164,6 +182,70 @@ const openMobileActions = () => {
     return;
   }
   mobileActionsOpen.value = true;
+};
+
+const onFolderChange = async (folder) => {
+  if (mobileActionsOpen.value) {
+    await requestCloseMobileActions();
+    await nextTick();
+  }
+  if (!props.note || folder === noteFolder.value) return;
+  try {
+    await props.moveNote(props.note.id, folder);
+  } catch (err) {
+    console.error("Failed to move note:", err);
+  }
+};
+
+const onTogglePin = async () => {
+  if (mobileActionsOpen.value) {
+    await requestCloseMobileActions();
+    await nextTick();
+  }
+  if (!props.note) return;
+  try {
+    await togglePin(props.note.id);
+  } catch (err) {
+    console.error("Failed to toggle pin:", err);
+  }
+};
+
+// Delegated click handler for the (pointer-events: none) preview pane — only
+// `.md-note-link` spans opt back into receiving clicks (see styles.css).
+const onPreviewClick = async (event) => {
+  const linkEl = event.target.closest?.(".md-note-link");
+  if (!linkEl) return;
+  if (!androidPlatform && !(event.ctrlKey || event.metaKey)) return;
+
+  const raw = linkEl.dataset.noteLink;
+  if (!raw) return;
+  let linkPath;
+  try {
+    linkPath = decodeURIComponent(raw);
+  } catch {
+    return;
+  }
+
+  const slash = linkPath.lastIndexOf("/");
+  const folderPath = slash === -1 ? null : linkPath.slice(0, slash);
+  const noteTitle = (slash === -1 ? linkPath : linkPath.slice(slash + 1)).trim();
+  if (!noteTitle) return;
+
+  if (mobileActionsOpen.value) {
+    await requestCloseMobileActions();
+    await nextTick();
+  }
+  debouncedSave.cancel?.();
+  await persistNow({ syncReminder: true });
+
+  const found = await props.openLink(folderPath, noteTitle);
+  if (!found) {
+    clearTimeout(notFoundTimeout);
+    status.value = "Note not found";
+    notFoundTimeout = setTimeout(() => {
+      if (status.value === "Note not found") status.value = "Saved";
+    }, 1500);
+  }
 };
 
 const handleDelete = async () => {
@@ -318,6 +400,24 @@ onBeforeUnmount(() => {
             </button>
           </template>
           <template v-else>
+            <select
+              class="note-folder-select"
+              aria-label="Folder"
+              :value="noteFolder"
+              @change="onFolderChange($event.target.value)"
+            >
+              <option v-for="f in realFolders" :key="f" :value="f">{{ f }}</option>
+            </select>
+            <button
+              type="button"
+              class="note-pin-button"
+              :class="{ 'is-active': pinned }"
+              :aria-label="pinned ? 'Unpin note' : 'Pin note'"
+              @click="onTogglePin"
+            >
+              <span v-if="pinned" class="folder-icon folder-icon--pinned" aria-hidden="true"></span>
+              {{ pinned ? "Pinned" : "Pin" }}
+            </button>
             <button
               type="button"
               class="note-reminder-button"
@@ -353,6 +453,7 @@ onBeforeUnmount(() => {
           class="note-modal__preview"
           aria-hidden="true"
           v-html="previewHtml"
+          @click="onPreviewClick"
         ></div>
 
         <textarea
@@ -403,6 +504,24 @@ onBeforeUnmount(() => {
         aria-modal="true"
         aria-label="Note actions"
       >
+        <label class="note-actions-menu__item note-actions-menu__item--select">
+          Folder
+          <select
+            aria-label="Folder"
+            :value="noteFolder"
+            @change="onFolderChange($event.target.value)"
+          >
+            <option v-for="f in realFolders" :key="f" :value="f">{{ f }}</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          class="note-actions-menu__item"
+          :class="{ 'is-active': pinned }"
+          @click="onTogglePin"
+        >
+          {{ pinned ? "Unpin" : "Pin" }}
+        </button>
         <button
           type="button"
           class="note-actions-menu__item"

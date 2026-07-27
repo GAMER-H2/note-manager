@@ -20,10 +20,15 @@ export function useNotes() {
     }
   };
 
-  const createNote = async () => {
-    const res = await invoke("create_note");
+  const createNote = async (folder) => {
+    const res = await invoke("create_note", { folder });
     if (!res?.id) throw new Error("create_note returned no id");
-    const note = { id: res.id, path: res.path ?? "", content: res.content ?? "" };
+    const note = {
+      id: res.id,
+      path: res.path ?? "",
+      content: res.content ?? "",
+      folder: res.folder ?? "General",
+    };
     // Backend lists newest-first; keep the same order in the UI.
     notes.value.unshift(note);
     return note;
@@ -40,5 +45,18 @@ export function useNotes() {
     notes.value = notes.value.filter((x) => x.id !== id);
   };
 
-  return { notes, ready, loadNotes, createNote, updateNote, deleteNote };
+  // Mutates the existing note object in place (rather than replacing it) so
+  // object identity is preserved for whoever else holds a reference to it
+  // (e.g. the currently open NoteModal's `activeNote`).
+  const moveNote = async (id, folder) => {
+    const res = await invoke("move_note", { req: { id, folder } });
+    const n = notes.value.find((x) => x.id === id);
+    if (n) {
+      n.folder = res?.folder ?? folder;
+      n.path = res?.path ?? n.path;
+    }
+    return res;
+  };
+
+  return { notes, ready, loadNotes, createNote, updateNote, deleteNote, moveNote };
 }
