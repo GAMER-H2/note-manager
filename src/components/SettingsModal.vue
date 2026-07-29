@@ -53,6 +53,7 @@ const {
   loadSyncConfig,
   chooseFolder,
   testRemote,
+  hasStoredPassword,
   saveSyncConfig,
   syncNow,
 } = useSync();
@@ -68,7 +69,12 @@ const activeCategory = ref("general");
 const exportPreview = ref(null);
 const includeHistory = ref(true);
 const importMode = ref("merge");
+const syncKind = ref("folder");
 const syncFolder = ref("");
+const syncUrl = ref("");
+const syncUsername = ref("");
+const syncPassword = ref("");
+const passwordOnFile = ref(false);
 
 const lastSyncLabel = computed(() =>
   lastSyncAt.value
@@ -87,23 +93,38 @@ const onChooseSyncFolder = async () => {
 };
 
 const candidateSync = () => ({
-  kind: "folder",
+  kind: syncKind.value,
   path: syncFolder.value.trim(),
-  url: "",
-  username: "",
+  url: syncUrl.value.trim(),
+  username: syncUsername.value.trim(),
   auto: false,
 });
 
+const syncReady = computed(() =>
+  syncKind.value === "folder"
+    ? !!syncFolder.value.trim()
+    : !!syncUrl.value.trim(),
+);
+
 const onConnectSync = async () => {
-  if (!syncFolder.value.trim()) return;
+  if (!syncReady.value) return;
   const candidate = candidateSync();
-  // Only persist a remote we've proved we can write to.
-  if (await testRemote(candidate)) await saveSyncConfig(candidate);
+  // Only persist a remote we've proved we can reach and write to.
+  if (await testRemote(candidate, syncPassword.value)) {
+    await saveSyncConfig(candidate);
+    // The password now lives in the keychain, so drop the copy in memory.
+    syncPassword.value = "";
+    passwordOnFile.value = await hasStoredPassword(candidate);
+  }
 };
 
 const onDisconnectSync = async () => {
   await saveSyncConfig(null);
   syncFolder.value = "";
+  syncUrl.value = "";
+  syncUsername.value = "";
+  syncPassword.value = "";
+  passwordOnFile.value = false;
 };
 
 const onSyncNow = async () => {
@@ -176,8 +197,14 @@ watch(
         exportPreview.value = p;
       });
       loadVaultRoot();
-      loadSyncConfig().then(() => {
-        syncFolder.value = syncConfig.value?.path ?? "";
+      loadSyncConfig().then(async () => {
+        const cfg = syncConfig.value;
+        syncKind.value = cfg?.kind ?? "folder";
+        syncFolder.value = cfg?.path ?? "";
+        syncUrl.value = cfg?.url ?? "";
+        syncUsername.value = cfg?.username ?? "";
+        syncPassword.value = "";
+        passwordOnFile.value = cfg ? await hasStoredPassword(cfg) : false;
       });
       document.documentElement.classList.add("settings-open");
       document.body.classList.add("settings-open");
@@ -342,17 +369,30 @@ onBeforeUnmount(() => {
               {{ vaultStatus.message }}
             </li>
 
-            <li class="settings-section-heading">Sync with a shared folder</li>
+            <li class="settings-section-heading">Sync</li>
 
             <li class="settings-toggle settings-toggle--stack">
               <span>
-                <strong>Sync folder</strong>
-                <small>
-                  A directory both this device and your other devices can see.
-                  On a Linux server or in a container, bind-mount it; with
-                  Google Drive, use an rclone mount.
+                <strong>Sync method</strong>
+                <small v-if="syncKind === 'folder'">
+                  A directory both this device and your others can see. On a
+                  Linux server or in a container, bind-mount it; for Google
+                  Drive, use an rclone mount.
+                </small>
+                <small v-else>
+                  Any WebDAV server — dufs or <code>rclone serve webdav</code> on
+                  a bare Linux box, a one-line docker container, or Nextcloud.
+                  rclone can also bridge Google Drive to WebDAV.
                 </small>
               </span>
+              <select class="settings-select" v-model="syncKind">
+                <option value="folder">Shared folder</option>
+                <option value="webdav">WebDAV server</option>
+              </select>
+            </li>
+
+            <li v-if="syncKind === 'folder'" class="settings-toggle settings-toggle--stack">
+              <span><strong>Sync folder</strong></span>
               <div class="settings-field-row">
                 <input
                   v-model="syncFolder"
@@ -371,11 +411,56 @@ onBeforeUnmount(() => {
               </div>
             </li>
 
+            <template v-else>
+              <li class="settings-toggle settings-toggle--stack">
+                <span><strong>Server URL</strong></span>
+                <input
+                  v-model="syncUrl"
+                  class="settings-input"
+                  type="url"
+                  placeholder="https://example.com/dav/notes"
+                  aria-label="WebDAV URL"
+                />
+              </li>
+              <li class="settings-toggle settings-toggle--stack">
+                <span><strong>Username</strong></span>
+                <input
+                  v-model="syncUsername"
+                  class="settings-input"
+                  type="text"
+                  autocomplete="username"
+                  aria-label="WebDAV username"
+                />
+              </li>
+              <li class="settings-toggle settings-toggle--stack">
+                <span>
+                  <strong>Password</strong>
+                  <small v-if="passwordOnFile">
+                    A password is saved in your system keychain. Leave blank to
+                    keep it.
+                  </small>
+                  <small v-else>
+                    Stored in your system keychain, never in the app's config
+                    files.
+                  </small>
+                </span>
+                <input
+                  v-model="syncPassword"
+                  class="settings-input"
+                  type="password"
+                  autocomplete="current-password"
+                  :placeholder="passwordOnFile ? '••••••••' : ''"
+                  aria-label="WebDAV password"
+                />
+              </li>
+            </template>
+
             <li class="settings-toggle settings-toggle--stack">
               <span>
                 <small v-if="syncConfig">
-                  Connected to <code>{{ syncConfig.path }}</code>. Last synced
-                  {{ lastSyncLabel }}.
+                  Connected to
+                  <code>{{ syncConfig.url || syncConfig.path }}</code>. Last
+                  synced {{ lastSyncLabel }}.
                 </small>
                 <small v-else>
                   Not connected. Conflicting edits are merged automatically
@@ -386,7 +471,7 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   class="settings-primary"
-                  :disabled="syncing || !syncFolder.trim()"
+                  :disabled="syncing || !syncReady"
                   @click="onConnectSync"
                 >
                   {{ syncConfig ? "Update" : "Connect" }}

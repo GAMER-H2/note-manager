@@ -45,19 +45,32 @@ export function useSync() {
     return typeof path === "string" ? path : null;
   };
 
-  // Probes the remote before saving, so a typo'd path fails here rather than
-  // silently doing nothing on every later sync.
-  const testRemote = async (candidate) => {
+  // Probes the remote before saving, so a typo'd path or a wrong password
+  // fails here rather than silently doing nothing on every later sync. On
+  // success the backend files the password in the OS keychain — it's only
+  // persisted once proven to work.
+  const testRemote = async (candidate, password) => {
     status.message = "Testing…";
     status.kind = "";
     try {
-      const msg = await invoke("test_sync_remote", { cfg: candidate });
+      const msg = await invoke("test_sync_remote", {
+        cfg: candidate,
+        password: password || null,
+      });
       status.message = msg;
       status.kind = "ok";
       return true;
     } catch (e) {
       status.message = `${e}`;
       status.kind = "error";
+      return false;
+    }
+  };
+
+  const hasStoredPassword = async (candidate) => {
+    try {
+      return await invoke("has_stored_password", { cfg: candidate });
+    } catch {
       return false;
     }
   };
@@ -108,6 +121,7 @@ export function useSync() {
     loadSyncConfig,
     chooseFolder,
     testRemote,
+    hasStoredPassword,
     saveSyncConfig,
     syncNow,
   };

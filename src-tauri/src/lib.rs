@@ -3,7 +3,9 @@ mod config;
 mod diff;
 mod history;
 mod notes;
+mod secrets;
 mod sync;
+mod webdav;
 
 use std::{fs, path::PathBuf, sync::Mutex};
 use tauri::Manager;
@@ -198,6 +200,7 @@ pub fn run() {
             config::set_sync_config,
             sync::sync_now,
             sync::test_sync_remote,
+            sync::has_stored_password,
             sync::get_last_sync,
             get_reminders,
             set_reminders,

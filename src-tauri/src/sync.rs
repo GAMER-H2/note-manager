@@ -578,9 +578,35 @@ fn sync_history(app: &tauri::AppHandle, remote: &dyn SyncRemote, report: &mut Sy
     }
 }
 
+/// Account key under which a remote's password is filed in the keychain.
+/// Keyed by URL and username so several servers can coexist.
+fn credential_account(cfg: &config::SyncConfig) -> String {
+    format!("webdav:{}:{}", cfg.url.trim_end_matches('/'), cfg.username)
+}
+
 fn build_remote(cfg: &config::SyncConfig) -> Result<Box<dyn SyncRemote>, String> {
+    build_remote_with(cfg, None)
+}
+
+/// `password` is supplied only while testing a not-yet-saved remote; otherwise
+/// it comes from the keychain, since it's never held in the config.
+fn build_remote_with(
+    cfg: &config::SyncConfig,
+    password: Option<&str>,
+) -> Result<Box<dyn SyncRemote>, String> {
     match cfg.kind.as_str() {
         "folder" => Ok(Box::new(FolderRemote::new(&cfg.path)?)),
+        "webdav" => {
+            let pass = match password {
+                Some(p) => p.to_string(),
+                None => crate::secrets::get_password(&credential_account(cfg)).unwrap_or_default(),
+            };
+            Ok(Box::new(crate::webdav::WebDavRemote::new(
+                &cfg.url,
+                &cfg.username,
+                &pass,
+            )?))
+        }
         other => Err(format!("Unknown sync type '{other}'.")),
     }
 }
@@ -592,14 +618,34 @@ pub fn sync_now(app: tauri::AppHandle) -> Result<SyncReport, String> {
     run_sync(&app, remote.as_ref())
 }
 
-/// Verifies a remote is reachable and writable before the user saves it.
+/// Verifies a remote is reachable and writable before the user saves it, and
+/// files the password on success so it's only persisted once proven.
 #[tauri::command]
-pub fn test_sync_remote(cfg: config::SyncConfig) -> Result<String, String> {
-    let remote = build_remote(&cfg)?;
+pub fn test_sync_remote(
+    cfg: config::SyncConfig,
+    password: Option<String>,
+) -> Result<String, String> {
+    let remote = build_remote_with(&cfg, password.as_deref())?;
     let probe = format!("{REMOTE_META}/.probe");
     remote.put(&probe, b"ok")?;
     remote.delete(&probe)?;
+
+    if cfg.kind == "webdav" {
+        if let Some(p) = password {
+            crate::secrets::set_password(&credential_account(&cfg), &p)?;
+        }
+    }
+
     Ok(format!("Connected to {}", remote.id()))
+}
+
+/// Whether a password is already on file, so the UI can show "saved" rather
+/// than an empty box that looks like the credential was lost.
+#[tauri::command]
+pub fn has_stored_password(cfg: config::SyncConfig) -> Result<bool, String> {
+    Ok(crate::secrets::get_password(&credential_account(&cfg))
+        .map(|p| !p.is_empty())
+        .unwrap_or(false))
 }
 
 #[tauri::command]
