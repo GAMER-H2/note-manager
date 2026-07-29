@@ -1,4 +1,6 @@
 mod config;
+mod diff;
+mod history;
 mod notes;
 
 use std::{fs, path::PathBuf, sync::Mutex};
@@ -113,6 +115,11 @@ pub fn run() {
             config::set_vault_root,
             config::reset_vault_root,
             config::get_device_id,
+            history::list_revisions,
+            history::get_revision,
+            history::restore_revision,
+            history::diff_revisions,
+            history::clear_history,
             get_reminders,
             set_reminders,
             get_settings,

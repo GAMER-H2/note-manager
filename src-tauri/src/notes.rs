@@ -49,6 +49,47 @@ pub fn content_hash(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Derives a note's title from its first non-empty line.
+///
+/// This MUST stay in step with `firstLineTitle` in `src/lib/notes.js` — that
+/// function is what note-links resolve `folder/title` against, and this one is
+/// what names files in a zip export and labels revisions. If they drift, an
+/// exported vault's links stop matching its filenames.
+pub fn first_line_title(content: &str) -> String {
+    let normalized = content.replace("\r\n", "\n");
+    let text = normalized.trim();
+    if text.is_empty() {
+        return "Untitled".to_string();
+    }
+
+    let first_line = text.split('\n').next().unwrap_or("").trim();
+    if first_line.is_empty() {
+        return "Untitled".to_string();
+    }
+
+    // Mirrors /^#{1,6}\s+/: up to six hashes, and only when followed by
+    // whitespace (so "#######x" and "#x" are both left alone).
+    let hashes = first_line.chars().take_while(|c| *c == '#').count();
+    let stripped = if (1..=6).contains(&hashes)
+        && first_line
+            .chars()
+            .nth(hashes)
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        first_line[hashes..].trim_start()
+    } else {
+        first_line
+    };
+
+    let title: String = stripped.chars().take(80).collect();
+    if title.trim().is_empty() {
+        "Untitled".to_string()
+    } else {
+        title
+    }
+}
+
 fn mtime_millis(path: &Path) -> u64 {
     fs::metadata(path)
         .and_then(|m| m.modified())
@@ -354,18 +395,35 @@ pub fn create_note(app: tauri::AppHandle, folder: Option<String>) -> Result<Note
 #[tauri::command]
 pub fn update_note(app: tauri::AppHandle, req: UpdateNoteRequest) -> Result<(), String> {
     let (path, _folder) = find_note_path(&app, &req.id)?;
-    fs::write(&path, req.content).map_err(|e| format!("Failed to write note file: {e}"))?;
+
+    // Capture what's on disk *before* overwriting it, so a note that predates
+    // version history still gets its original content into the timeline.
+    let previous = fs::read_to_string(&path).unwrap_or_default();
+    let previous_mtime = mtime_millis(&path);
+    crate::history::ensure_baseline(&app, &req.id, &previous, previous_mtime)?;
+
+    fs::write(&path, &req.content).map_err(|e| format!("Failed to write note file: {e}"))?;
+
+    // History is best-effort: a failure here must not make the user think their
+    // note failed to save, because it did save.
+    if let Err(e) = crate::history::snapshot(&app, &req.id, &req.content) {
+        eprintln!("Failed to snapshot note {}: {e}", req.id);
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub fn delete_note(app: tauri::AppHandle, req: DeleteNoteRequest) -> Result<(), String> {
     match find_note_path(&app, &req.id) {
-        Ok((path, _folder)) => match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("Failed to delete note file: {e}")),
-        },
+        Ok((path, _folder)) => {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("Failed to delete note file: {e}")),
+            }
+            // Otherwise the deleted note's full text lingers in the vault.
+            crate::history::forget(&app, &req.id)
+        }
         Err(_) => Ok(()),
     }
 }
