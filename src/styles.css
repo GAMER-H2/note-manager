@@ -2115,3 +2115,47 @@ body.note-open {
         border-bottom: 1px solid var(--border);
     }
 }
+
+/* Sync panel controls */
+.settings-status.is-error {
+    background: rgba(255, 107, 107, 0.1);
+    border-color: rgba(255, 107, 107, 0.35);
+}
+
+.settings-path {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    word-break: break-all;
+    color: var(--text);
+}
+
+.settings-button-row,
+.settings-field-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.settings-field-row {
+    width: 100%;
+}
+
+.settings-input {
+    flex: 1;
+    min-width: 0;
+    appearance: none;
+    height: 38px;
+    padding: 0 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+}
+.settings-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}

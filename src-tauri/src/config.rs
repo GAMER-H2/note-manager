@@ -22,11 +22,34 @@ pub const META_DIR: &str = ".notemanager";
 /// same id and note ids would start colliding again — the exact problem the
 /// device suffix exists to prevent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncConfig {
+    /// Transport discriminator: "folder" today, "webdav" in Phase 5.
+    pub kind: String,
+    /// Folder remotes: absolute path to the shared directory (an rclone or
+    /// Syncthing folder, an NFS/SMB mount, a docker bind mount).
+    #[serde(default)]
+    pub path: String,
+    /// WebDAV remotes: base URL and username. The password is never stored
+    /// here — see the keychain handling in Phase 5.
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub username: String,
+    /// Sync automatically on startup and after edits settle.
+    #[serde(default)]
+    pub auto: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
     pub device_id: String,
     /// `None` means "use the built-in default" (`app_data_dir/notes`), so the
     /// default keeps working if the app data dir ever moves.
+    #[serde(default)]
     pub vault_path: Option<String>,
+    #[serde(default)]
+    pub sync: Option<SyncConfig>,
 }
 
 /// What `set_vault_root` actually did, so the UI can report it accurately.
@@ -97,9 +120,40 @@ pub fn load_or_init(app: &tauri::AppHandle) -> Result<DeviceConfig, String> {
     let cfg = DeviceConfig {
         device_id: generate_device_id(&path),
         vault_path: None,
+        sync: None,
     };
     save(app, &cfg)?;
     Ok(cfg)
+}
+
+pub fn sync_config(app: &tauri::AppHandle) -> Option<SyncConfig> {
+    app.state::<AppState>()
+        .config
+        .lock()
+        .ok()
+        .and_then(|cfg| cfg.sync.clone())
+}
+
+#[tauri::command]
+pub fn get_sync_config(app: tauri::AppHandle) -> Result<Option<SyncConfig>, String> {
+    Ok(sync_config(&app))
+}
+
+#[tauri::command]
+pub fn set_sync_config(
+    app: tauri::AppHandle,
+    sync: Option<SyncConfig>,
+) -> Result<(), String> {
+    {
+        let state = app.state::<AppState>();
+        let mut cfg = state
+            .config
+            .lock()
+            .map_err(|_| "Device config lock poisoned".to_string())?;
+        cfg.sync = sync;
+        save(&app, &cfg)?;
+    }
+    Ok(())
 }
 
 pub fn save(app: &tauri::AppHandle, cfg: &DeviceConfig) -> Result<(), String> {

@@ -184,6 +184,56 @@ pub fn ensure_baseline(
     write_revisions(app, id, &revs)
 }
 
+/// Looks up stored content by its hash.
+///
+/// This is how sync recovers the merge base: sync-state records only the hash
+/// both sides agreed on, and the text behind it is already sitting in history,
+/// so there's no need for a second copy of every note. Returns `None` if the
+/// revision has since been pruned, which callers must treat as "no safe base".
+pub fn content_by_hash(app: &tauri::AppHandle, id: &str, hash: &str) -> Option<String> {
+    read_revisions(app, id)
+        .ok()?
+        .into_iter()
+        .find(|r| r.hash == hash)
+        .map(|r| r.content)
+}
+
+/// Unions two histories of the same note, so syncing converges both timelines
+/// instead of one device's overwriting the other's.
+///
+/// Entries are identified by (timestamp, hash); `rev` is renumbered afterwards
+/// because two devices working offline will both have minted the same numbers
+/// for different content.
+pub fn merge_jsonl(local: &str, remote: &str) -> String {
+    let parse = |raw: &str| -> Vec<Revision> {
+        raw.lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<Revision>(l).ok())
+            .collect()
+    };
+
+    let mut seen: std::collections::HashSet<(u64, String)> = std::collections::HashSet::new();
+    let mut all: Vec<Revision> = Vec::new();
+    for rev in parse(local).into_iter().chain(parse(remote)) {
+        if seen.insert((rev.ts, rev.hash.clone())) {
+            all.push(rev);
+        }
+    }
+
+    all.sort_by_key(|r| r.ts);
+    let merged = prune(all);
+
+    let mut out = String::new();
+    for (i, mut rev) in merged.into_iter().enumerate() {
+        rev.rev = i as u64 + 1;
+        if let Ok(line) = serde_json::to_string(&rev) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Drops a note's history. Called when the note itself is deleted, so deleting
 /// a note doesn't leave its full text behind in the vault.
 pub fn forget(app: &tauri::AppHandle, id: &str) -> Result<(), String> {

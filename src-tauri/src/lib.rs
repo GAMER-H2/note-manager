@@ -3,6 +3,7 @@ mod config;
 mod diff;
 mod history;
 mod notes;
+mod sync;
 
 use std::{fs, path::PathBuf, sync::Mutex};
 use tauri::Manager;
@@ -108,6 +109,14 @@ pub(crate) fn read_reminders_raw(app: &tauri::AppHandle) -> Result<String, Strin
     get_reminders(app.clone())
 }
 
+pub(crate) fn write_pinned_raw(app: &tauri::AppHandle, data: &str) -> Result<(), String> {
+    set_pinned(app.clone(), data.to_string())
+}
+
+pub(crate) fn write_reminders_raw(app: &tauri::AppHandle, data: &str) -> Result<(), String> {
+    set_reminders(app.clone(), data.to_string())
+}
+
 /// Folds an imported pinned list into the existing one. Union rather than
 /// replace: importing an archive shouldn't unpin notes it didn't know about.
 pub(crate) fn merge_pinned(
@@ -185,6 +194,11 @@ pub fn run() {
             archive::export_vault,
             archive::export_preview,
             archive::import_vault,
+            config::get_sync_config,
+            config::set_sync_config,
+            sync::sync_now,
+            sync::test_sync_remote,
+            sync::get_last_sync,
             get_reminders,
             set_reminders,
             get_settings,

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, onBeforeUnmount } from "vue";
+import { computed, ref, watch, onBeforeUnmount } from "vue";
 import { useSettings, THEMES } from "../composables/useSettings.js";
 import {
   URGENCY_LEVELS,
@@ -7,6 +7,8 @@ import {
 } from "../composables/useNotifications.js";
 import { useReminders } from "../composables/useReminders.js";
 import { useArchive } from "../composables/useArchive.js";
+import { useSync } from "../composables/useSync.js";
+import { useVault } from "../composables/useVault.js";
 import { isAndroid } from "../lib/platform.js";
 import { useOverlayHistory } from "../composables/useOverlayHistory.js";
 
@@ -43,10 +45,79 @@ const descriptions = {
   sync: "Back up, restore, and move your notes.",
 };
 
+const {
+  config: syncConfig,
+  lastSyncAt,
+  syncing,
+  status: syncStatus,
+  loadSyncConfig,
+  chooseFolder,
+  testRemote,
+  saveSyncConfig,
+  syncNow,
+} = useSync();
+const {
+  vaultRoot,
+  loadVaultRoot,
+  chooseVaultRoot,
+  resetVaultRoot,
+  status: vaultStatus,
+} = useVault();
+
 const activeCategory = ref("general");
 const exportPreview = ref(null);
 const includeHistory = ref(true);
 const importMode = ref("merge");
+const syncFolder = ref("");
+
+const lastSyncLabel = computed(() =>
+  lastSyncAt.value
+    ? new Date(lastSyncAt.value).toLocaleString(undefined, {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "never",
+);
+
+const onChooseSyncFolder = async () => {
+  const picked = await chooseFolder();
+  if (picked) syncFolder.value = picked;
+};
+
+const candidateSync = () => ({
+  kind: "folder",
+  path: syncFolder.value.trim(),
+  url: "",
+  username: "",
+  auto: false,
+});
+
+const onConnectSync = async () => {
+  if (!syncFolder.value.trim()) return;
+  const candidate = candidateSync();
+  // Only persist a remote we've proved we can write to.
+  if (await testRemote(candidate)) await saveSyncConfig(candidate);
+};
+
+const onDisconnectSync = async () => {
+  await saveSyncConfig(null);
+  syncFolder.value = "";
+};
+
+const onSyncNow = async () => {
+  const report = await syncNow();
+  if (report) emit("imported");
+};
+
+const onChooseVault = async () => {
+  if (await chooseVaultRoot()) emit("imported");
+};
+
+const onResetVault = async () => {
+  if (await resetVaultRoot()) emit("imported");
+};
 
 const onExport = () => exportVault({ includeHistory: includeHistory.value });
 
@@ -103,6 +174,10 @@ watch(
       syncDraftFromSaved();
       previewExport().then((p) => {
         exportPreview.value = p;
+      });
+      loadVaultRoot();
+      loadSyncConfig().then(() => {
+        syncFolder.value = syncConfig.value?.path ?? "";
       });
       document.documentElement.classList.add("settings-open");
       document.body.classList.add("settings-open");
@@ -236,6 +311,115 @@ onBeforeUnmount(() => {
 
           <!-- Sync -->
           <ul v-show="activeCategory === 'sync'" class="settings-toggle-list">
+            <li class="settings-section-heading">Where notes are stored</li>
+
+            <li class="settings-toggle settings-toggle--stack">
+              <span>
+                <strong>Vault folder</strong>
+                <small class="settings-path">{{ vaultRoot || "Loading…" }}</small>
+                <small>
+                  Point this at a folder you can reach from other tools — an
+                  rclone or Syncthing folder, a mounted share, a Dropbox or
+                  Drive directory — and your notes are readable markdown files
+                  in it.
+                </small>
+              </span>
+              <div class="settings-button-row">
+                <button type="button" class="settings-secondary" @click="onChooseVault">
+                  Change…
+                </button>
+                <button type="button" class="settings-secondary" @click="onResetVault">
+                  Reset
+                </button>
+              </div>
+            </li>
+
+            <li
+              v-if="vaultStatus.message"
+              class="settings-status"
+              :class="{ 'is-error': vaultStatus.kind === 'error' }"
+            >
+              {{ vaultStatus.message }}
+            </li>
+
+            <li class="settings-section-heading">Sync with a shared folder</li>
+
+            <li class="settings-toggle settings-toggle--stack">
+              <span>
+                <strong>Sync folder</strong>
+                <small>
+                  A directory both this device and your other devices can see.
+                  On a Linux server or in a container, bind-mount it; with
+                  Google Drive, use an rclone mount.
+                </small>
+              </span>
+              <div class="settings-field-row">
+                <input
+                  v-model="syncFolder"
+                  class="settings-input"
+                  type="text"
+                  placeholder="/mnt/notes-sync"
+                  aria-label="Sync folder path"
+                />
+                <button
+                  type="button"
+                  class="settings-secondary"
+                  @click="onChooseSyncFolder"
+                >
+                  Browse…
+                </button>
+              </div>
+            </li>
+
+            <li class="settings-toggle settings-toggle--stack">
+              <span>
+                <small v-if="syncConfig">
+                  Connected to <code>{{ syncConfig.path }}</code>. Last synced
+                  {{ lastSyncLabel }}.
+                </small>
+                <small v-else>
+                  Not connected. Conflicting edits are merged automatically
+                  where possible, and kept as separate copies when not.
+                </small>
+              </span>
+              <div class="settings-button-row">
+                <button
+                  type="button"
+                  class="settings-primary"
+                  :disabled="syncing || !syncFolder.trim()"
+                  @click="onConnectSync"
+                >
+                  {{ syncConfig ? "Update" : "Connect" }}
+                </button>
+                <button
+                  v-if="syncConfig"
+                  type="button"
+                  class="settings-secondary"
+                  :disabled="syncing"
+                  @click="onSyncNow"
+                >
+                  {{ syncing ? "Syncing…" : "Sync now" }}
+                </button>
+                <button
+                  v-if="syncConfig"
+                  type="button"
+                  class="settings-secondary"
+                  :disabled="syncing"
+                  @click="onDisconnectSync"
+                >
+                  Disconnect
+                </button>
+              </div>
+            </li>
+
+            <li
+              v-if="syncStatus.message"
+              class="settings-status"
+              :class="{ 'is-error': syncStatus.kind === 'error' }"
+            >
+              {{ syncStatus.message }}
+            </li>
+
             <li class="settings-section-heading">Import &amp; export</li>
 
             <li class="settings-toggle settings-toggle--stack">
