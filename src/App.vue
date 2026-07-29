@@ -17,10 +17,11 @@ import { useOverlayHistory } from "./composables/useOverlayHistory.js";
 import { firstLineTitle } from "./lib/notes.js";
 
 const { notes, loadNotes, createNote, updateNote, deleteNote, moveNote } = useNotes();
-const { loadReminders, removeReminder } = useReminders();
+const { loadReminders, reloadReminders, rescheduleAllReminders, removeReminder } =
+  useReminders();
 const { settings, loadSettings } = useSettings();
 const { selectedFolder, loadFolders, selectFolder, defaultNoteFolder } = useFolders();
-const { loadPinned, isPinned, unpin } = usePinned();
+const { loadPinned, reloadPinned, isPinned, unpin } = usePinned();
 
 const visibleNotes = computed(() =>
   selectedFolder.value === PINNED_FOLDER
@@ -83,6 +84,17 @@ const addNote = async () => {
   } catch (err) {
     console.error("Failed to create note:", err);
   }
+};
+
+// The vault changed wholesale (an import, or a future sync pull), so every
+// store that mirrors it has to be re-read. The open note is closed because the
+// file it points at may no longer exist.
+const onVaultChanged = async () => {
+  activeNote.value = null;
+  await Promise.all([loadNotes(), loadFolders(), reloadPinned(), reloadReminders()]);
+  // Arriving reminders exist only on disk — nothing is scheduled for them on
+  // this device until we ask for it.
+  await rescheduleAllReminders();
 };
 
 const onSelectFolder = (name) => {
@@ -209,7 +221,11 @@ onUnmounted(() => {
       @click="requestCloseSidebar"
     ></div>
 
-    <SettingsModal :open="settingsOpen" @close="settingsOpen = false" />
+    <SettingsModal
+      :open="settingsOpen"
+      @close="settingsOpen = false"
+      @imported="onVaultChanged"
+    />
     <FolderModal
       :open="folderModalOpen"
       :parent-path="folderModalParent"

@@ -958,6 +958,39 @@ body.settings-open {
     background: rgba(255, 255, 255, 0.04);
 }
 
+.settings-primary:disabled,
+.settings-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Sub-heading inside a settings panel, for grouping related rows. */
+.settings-section-heading {
+    list-style: none;
+    padding: 4px 0 2px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.settings-status {
+    list-style: none;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: rgba(79, 124, 255, 0.1);
+    border: 1px solid rgba(79, 124, 255, 0.28);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.settings-warning {
+    color: var(--accent);
+}
+
 .settings-close-button {
     appearance: none;
     border: 1px solid transparent;

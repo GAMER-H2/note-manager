@@ -1,3 +1,4 @@
+mod archive;
 mod config;
 mod diff;
 mod history;
@@ -98,11 +99,72 @@ fn set_pinned(app: tauri::AppHandle, data: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Raw JSON of the pinned/reminder stores, for the archive exporter.
+pub(crate) fn read_pinned_raw(app: &tauri::AppHandle) -> Result<String, String> {
+    get_pinned(app.clone())
+}
+
+pub(crate) fn read_reminders_raw(app: &tauri::AppHandle) -> Result<String, String> {
+    get_reminders(app.clone())
+}
+
+/// Folds an imported pinned list into the existing one. Union rather than
+/// replace: importing an archive shouldn't unpin notes it didn't know about.
+pub(crate) fn merge_pinned(
+    app: &tauri::AppHandle,
+    incoming: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(incoming) = incoming.as_array() else {
+        return Ok(());
+    };
+
+    let existing_raw = get_pinned(app.clone())?;
+    let mut merged: Vec<serde_json::Value> = serde_json::from_str(&existing_raw).unwrap_or_default();
+
+    for id in incoming {
+        if !merged.iter().any(|e| e == id) {
+            merged.push(id.clone());
+        }
+    }
+
+    set_pinned(
+        app.clone(),
+        serde_json::to_string(&merged).map_err(|e| format!("Failed to serialize pinned: {e}"))?,
+    )
+}
+
+/// Folds imported reminders into the existing map. Existing entries win, since
+/// a reminder already scheduled on this device is live and the imported one is
+/// not.
+pub(crate) fn merge_reminders(
+    app: &tauri::AppHandle,
+    incoming: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(incoming) = incoming.as_object() else {
+        return Ok(());
+    };
+
+    let existing_raw = get_reminders(app.clone())?;
+    let mut merged: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&existing_raw).unwrap_or_default();
+
+    for (note_id, cfg) in incoming {
+        merged.entry(note_id.clone()).or_insert_with(|| cfg.clone());
+    }
+
+    set_reminders(
+        app.clone(),
+        serde_json::to_string(&merged).map_err(|e| format!("Failed to serialize reminders: {e}"))?,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             notes::create_note,
             notes::update_note,
@@ -120,6 +182,9 @@ pub fn run() {
             history::restore_revision,
             history::diff_revisions,
             history::clear_history,
+            archive::export_vault,
+            archive::export_preview,
+            archive::import_vault,
             get_reminders,
             set_reminders,
             get_settings,
