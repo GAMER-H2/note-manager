@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { onAction } from "@tauri-apps/plugin-notification";
 import AppHeader from "./components/AppHeader.vue";
 import AppSidebar from "./components/AppSidebar.vue";
@@ -10,6 +10,8 @@ import FolderModal from "./components/FolderModal.vue";
 import { useNotes } from "./composables/useNotes.js";
 import { useReminders } from "./composables/useReminders.js";
 import { useSettings } from "./composables/useSettings.js";
+import { useSync } from "./composables/useSync.js";
+import { useAutoSync } from "./composables/useAutoSync.js";
 import { useFolders, PINNED_FOLDER } from "./composables/useFolders.js";
 import { usePinned } from "./composables/usePinned.js";
 import { initNotifications } from "./composables/useNotifications.js";
@@ -17,10 +19,13 @@ import { useOverlayHistory } from "./composables/useOverlayHistory.js";
 import { firstLineTitle } from "./lib/notes.js";
 
 const { notes, loadNotes, createNote, updateNote, deleteNote, moveNote } = useNotes();
-const { loadReminders, removeReminder } = useReminders();
+const { loadReminders, reloadReminders, rescheduleAllReminders, removeReminder } =
+  useReminders();
 const { settings, loadSettings } = useSettings();
 const { selectedFolder, loadFolders, selectFolder, defaultNoteFolder } = useFolders();
-const { loadPinned, isPinned, unpin } = usePinned();
+const { loadPinned, reloadPinned, isPinned, unpin } = usePinned();
+const { loadSyncConfig } = useSync();
+const { startAutoSync, stopAutoSync, syncSoon } = useAutoSync();
 
 const visibleNotes = computed(() =>
   selectedFolder.value === PINNED_FOLDER
@@ -84,6 +89,23 @@ const addNote = async () => {
     console.error("Failed to create note:", err);
   }
 };
+
+// The vault changed wholesale (an import, or a future sync pull), so every
+// store that mirrors it has to be re-read. The open note is closed because the
+// file it points at may no longer exist.
+const onVaultChanged = async () => {
+  activeNote.value = null;
+  await Promise.all([loadNotes(), loadFolders(), reloadPinned(), reloadReminders()]);
+  // Arriving reminders exist only on disk — nothing is scheduled for them on
+  // this device until we ask for it.
+  await rescheduleAllReminders();
+};
+
+// Closing a note is the point an edit has settled: the content is written and
+// nothing is holding the editor open, so it's safe to push it out.
+watch(activeNote, (now, before) => {
+  if (before && !now) syncSoon();
+});
 
 const onSelectFolder = (name) => {
   selectFolder(name);
@@ -154,10 +176,21 @@ onMounted(async () => {
   } else if (typeof mql.addListener === "function") {
     mql.addListener(onBreakpointChange); // Safari fallback
   }
+
+  // The scheduler needs to know whether a remote is configured at all, and
+  // that lives in the sync config rather than in settings.
+  await loadSyncConfig();
+  startAutoSync({
+    // Never pull the vault out from under an open editor — the refresh closes
+    // the active note, which would discard whatever is being typed.
+    shouldDefer: () => activeNote.value !== null,
+    onChanged: onVaultChanged,
+  });
 });
 
 onUnmounted(() => {
   actionListener?.unregister();
+  stopAutoSync();
 
   if (typeof mql.removeEventListener === "function") {
     mql.removeEventListener("change", onBreakpointChange);
@@ -209,7 +242,11 @@ onUnmounted(() => {
       @click="requestCloseSidebar"
     ></div>
 
-    <SettingsModal :open="settingsOpen" @close="settingsOpen = false" />
+    <SettingsModal
+      :open="settingsOpen"
+      @close="settingsOpen = false"
+      @imported="onVaultChanged"
+    />
     <FolderModal
       :open="folderModalOpen"
       :parent-path="folderModalParent"

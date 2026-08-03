@@ -767,9 +767,12 @@ body.settings-open {
 
 .settings-modal__content {
     width: min(840px, 100%);
-    max-height: min(640px, 90vh);
+    /* A fixed height, not a max: the modal should be the same size whichever
+       category is open, rather than resizing to fit the shortest panel. */
+    height: min(640px, 90vh);
     display: grid;
     grid-template-columns: 240px 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
     background: var(--surface);
     border-radius: 18px;
     border: 1px solid rgba(255, 255, 255, 0.04);
@@ -780,12 +783,21 @@ body.settings-open {
 }
 
 .settings-categories {
+    grid-row: 1;
+    grid-column: 1;
     padding: 28px 24px;
     background: linear-gradient(180deg, #161b27 0%, #10131d 100%);
     border-right: 1px solid rgba(255, 255, 255, 0.04);
     display: flex;
     flex-direction: column;
     gap: 16px;
+    min-height: 0;
+}
+.settings-categories__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
 }
 .settings-categories h2 {
     margin: 0 0 4px;
@@ -819,10 +831,32 @@ body.settings-open {
 
 /* Details pane: fixed header, scrolling middle, pinned footer. */
 .settings-details {
+    grid-row: 1;
+    grid-column: 2;
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+}
+
+.settings-back-button {
+    appearance: none;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+.settings-back-button:hover {
+    background: rgba(255, 255, 255, 0.06);
 }
 .settings-details header h3 {
     margin: 0;
@@ -918,6 +952,8 @@ body.settings-open {
 }
 
 .settings-modal__footer {
+    grid-row: 2;
+    grid-column: 1 / -1;
     display: flex;
     justify-content: flex-end;
     gap: 12px;
@@ -956,6 +992,39 @@ body.settings-open {
 }
 .settings-secondary:hover {
     background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-primary:disabled,
+.settings-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Sub-heading inside a settings panel, for grouping related rows. */
+.settings-section-heading {
+    list-style: none;
+    padding: 4px 0 2px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.settings-status {
+    list-style: none;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: rgba(79, 124, 255, 0.1);
+    border: 1px solid rgba(79, 124, 255, 0.28);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.settings-warning {
+    color: var(--accent);
 }
 
 .settings-close-button {
@@ -1035,46 +1104,72 @@ body.settings-open {
         height: 100dvh;
         max-height: none;
         border-radius: 0;
+        /* One pane at a time: the category list or the chosen page, never
+           both. Whichever is visible takes the single content row. */
         grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: minmax(0, 1fr) auto;
+    }
+    /* Both panes claim the same cell — only one is ever rendered on mobile. */
+    .settings-categories,
+    .settings-details {
+        grid-row: 1;
+        grid-column: 1;
     }
     .settings-categories {
         border-right: none;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-        flex-direction: row;
-        flex-wrap: wrap;
+        flex-direction: column;
         gap: 10px;
-        /* Reserve top space for the safe area and right space for the close
-           button, which is pinned to the top-right corner on mobile. */
-        padding: calc(18px + env(safe-area-inset-top)) 56px 0 20px;
+        overflow-y: auto;
+        padding: calc(18px + env(safe-area-inset-top)) 20px 20px;
     }
-    .settings-categories h2 {
-        flex-basis: 100%;
+    /* Full-width rows that read as a list of pages to drill into, the way
+       Android settings screens work. */
+    .settings-category {
+        padding: 16px 14px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        color: var(--text);
+        font-size: 15px;
     }
-    .settings-categories nav {
-        display: contents;
+    .settings-category::after {
+        content: "›";
+        float: right;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1;
     }
-    /* The close button lives inside the details pane in the DOM; on mobile the
-       details pane is the second row, so pin the button to the top-right of the
-       whole modal instead of letting it sit halfway down the screen. */
-    .settings-close-button {
-        position: absolute;
-        top: calc(14px + env(safe-area-inset-top));
-        right: 14px;
-        z-index: 3;
+    /* Selection is expressed by which page you're on, so don't also highlight
+       the row you came from when you navigate back. */
+    .settings-category[aria-selected="true"] {
+        background: var(--surface-2);
+        border-color: var(--border);
     }
-    /* Details fills the second row; only .settings-scroll scrolls, so the
-       Apply/Cancel footer stays pinned to the bottom of the screen. */
     .settings-details {
         min-height: 0;
         overflow: hidden;
+    }
+    .settings-details__header {
+        align-items: center;
+        padding-top: calc(18px + env(safe-area-inset-top));
     }
     .settings-toggle {
         flex-direction: column;
         align-items: flex-start;
     }
+    /* Stacked rows hold full-width controls; `flex-start` above would shrink
+       inputs and selects to their intrinsic width instead. */
+    .settings-toggle--stack {
+        align-items: stretch;
+    }
     .settings-select {
         width: 100%;
+    }
+    .settings-field-row {
+        flex-wrap: nowrap;
+    }
+    .settings-input {
+        /* 16px keeps mobile browsers from zooming in on focus. */
+        font-size: 16px;
     }
     .settings-modal__footer {
         flex-direction: column-reverse;
@@ -1188,6 +1283,7 @@ body.note-open {
 .note-close-button,
 .note-delete-button,
 .note-reminder-button,
+.note-history-button,
 .note-pin-button,
 .note-folder-select,
 .note-actions-button {
@@ -1218,6 +1314,7 @@ body.note-open {
 }
 
 .note-reminder-button:hover,
+.note-history-button:hover,
 .note-pin-button:hover,
 .note-actions-button:hover {
     background: rgba(255, 255, 255, 0.05);
@@ -1225,6 +1322,7 @@ body.note-open {
 }
 
 .note-reminder-button:active,
+.note-history-button:active,
 .note-pin-button:active,
 .note-actions-button:active {
     transform: scale(0.98);
@@ -1838,4 +1936,298 @@ body.note-open {
     display: flex;
     flex-direction: column;
     gap: 18px;
+}
+
+/* ===================== Version history modal ===================== */
+.history-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 7, 10, 0.65);
+    backdrop-filter: blur(3px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    /* Above the note editor (z-index 95) since it opens on top of it. */
+    z-index: 110;
+}
+.history-overlay:not([hidden]) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.history-modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(18px + env(safe-area-inset-top))
+        calc(18px + env(safe-area-inset-right))
+        calc(18px + env(safe-area-inset-bottom))
+        calc(18px + env(safe-area-inset-left));
+    z-index: 115;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(12px) scale(0.98);
+    transition:
+        opacity 180ms ease,
+        transform 220ms ease;
+}
+.history-modal[aria-hidden="false"] {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+.history-modal__content {
+    width: min(900px, 100%);
+    max-height: min(680px, 90vh);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    box-shadow:
+        0 30px 80px rgba(2, 4, 10, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.history-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 20px 22px 14px;
+    border-bottom: 1px solid var(--border);
+}
+.history-modal__header h2 {
+    margin: 0;
+    font-size: 18px;
+}
+.history-modal__subtitle {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+}
+.history-close-button {
+    appearance: none;
+    height: 34px;
+    min-width: 34px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--text);
+    font: inherit;
+    font-size: 18px;
+    cursor: pointer;
+}
+.history-close-button:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Revision list beside the diff; collapses to stacked rows on narrow screens. */
+.history-modal__body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+}
+
+.history-list {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.history-entry {
+    appearance: none;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+    transition:
+        background 140ms ease,
+        border-color 140ms ease;
+}
+.history-entry:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+.history-entry.is-active {
+    background: rgba(79, 124, 255, 0.12);
+    border-color: rgba(79, 124, 255, 0.4);
+}
+.history-entry strong {
+    font-size: 13px;
+    font-weight: 650;
+}
+.history-entry small {
+    color: var(--muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.history-entry__meta {
+    opacity: 0.75;
+    font-size: 11px;
+}
+
+.history-diff {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.history-diff__summary {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--muted);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.history-diff__added {
+    color: #6ee7a8;
+    font-weight: 650;
+    margin-right: 8px;
+}
+.history-diff__removed {
+    color: var(--danger);
+    font-weight: 650;
+    margin-right: 8px;
+}
+.history-diff__hint {
+    color: var(--muted);
+}
+.history-diff__badge {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.history-diff__lines {
+    flex: 1;
+    margin: 0;
+    padding: 12px 0;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+}
+.history-diff__line {
+    display: block;
+    padding: 0 18px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.history-diff__line--add {
+    background: rgba(110, 231, 168, 0.12);
+    color: #b7f5d3;
+}
+.history-diff__line--remove {
+    background: rgba(255, 107, 107, 0.12);
+    color: #ffc2c2;
+}
+.history-diff__line--same {
+    color: var(--muted);
+}
+
+.history-empty {
+    margin: 0;
+    padding: 20px 18px;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.history-modal__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+}
+.history-modal__status {
+    color: var(--muted);
+    font-size: 13px;
+}
+.history-modal__footer-actions {
+    display: flex;
+    gap: 10px;
+}
+
+@media (max-width: 720px) {
+    .history-modal__body {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(120px, 34%) 1fr;
+    }
+    .history-list {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+}
+
+/* Sync panel controls */
+.settings-status.is-error {
+    background: rgba(255, 107, 107, 0.1);
+    border-color: rgba(255, 107, 107, 0.35);
+}
+
+.settings-path {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    word-break: break-all;
+    color: var(--text);
+}
+
+.settings-button-row,
+.settings-field-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.settings-field-row {
+    width: 100%;
+}
+
+.settings-input {
+    /* Full width by default: standalone inputs (the WebDAV URL, username and
+       password) sit directly in a stacked row, where `flex: 1` would stretch
+       them down the column rather than across it. */
+    width: 100%;
+    flex: 0 0 auto;
+    min-width: 0;
+    appearance: none;
+    height: 42px;
+    padding: 0 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13.5px;
+}
+/* Paired with a button (the vault/sync folder pickers), the input shares the
+   row instead, so it grows horizontally and gives the button its width back. */
+.settings-field-row .settings-input {
+    flex: 1 1 auto;
+    width: auto;
+}
+.settings-input:focus {
+    outline: none;
+    border-color: var(--primary);
 }

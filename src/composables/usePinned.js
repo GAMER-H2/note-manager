@@ -30,6 +30,22 @@ export function usePinned() {
     }
   };
 
+  // Re-reads from disk, bypassing the load-once guard and dropping ids that
+  // are no longer pinned. Needed after an import or sync pull rewrites the
+  // store behind the app's back.
+  const reloadPinned = async () => {
+    try {
+      const raw = await invoke("get_pinned");
+      const ids = JSON.parse(raw || "[]");
+      pinnedIds.clear();
+      if (Array.isArray(ids)) ids.forEach((id) => pinnedIds.add(id));
+    } catch (e) {
+      console.warn("Failed to reload pinned notes:", e);
+    } finally {
+      loaded = true;
+    }
+  };
+
   const isPinned = (noteId) => pinnedIds.has(noteId);
 
   const togglePin = async (noteId) => {
@@ -47,5 +63,5 @@ export function usePinned() {
     await persist();
   };
 
-  return { pinnedIds, loadPinned, isPinned, togglePin, unpin };
+  return { pinnedIds, loadPinned, reloadPinned, isPinned, togglePin, unpin };
 }

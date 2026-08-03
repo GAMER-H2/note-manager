@@ -13,6 +13,7 @@ import { initVisualViewport } from "../composables/useVisualViewport.js";
 import { useOverlayHistory } from "../composables/useOverlayHistory.js";
 import { isAndroid } from "../lib/platform.js";
 import ReminderModal from "./ReminderModal.vue";
+import HistoryModal from "./HistoryModal.vue";
 
 const props = defineProps({
   // The note currently being edited, or null when the editor is closed.
@@ -36,6 +37,7 @@ const { realFolders } = useFolders();
 const { isPinned, togglePin } = usePinned();
 
 const reminderOpen = ref(false);
+const historyOpen = ref(false);
 const mobileActionsOpen = ref(false);
 const hasReminder = computed(() =>
   props.note ? !!getReminder(props.note.id) : false,
@@ -63,10 +65,18 @@ const open = computed(() => !!props.note);
 const autosaveEnabled = computed(() => settings.autosave !== false);
 const dirty = computed(() => draft.value !== lastSaved.value);
 const title = computed(() => firstLineTitle(draft.value));
+// Real filename off the note's path rather than a reconstructed `<id>.md`,
+// so it reflects the titled-filename setting and stays right after a rename.
+const fileName = computed(() => {
+  const path = props.note?.path;
+  if (!path) return props.note ? `${props.note.id}.md` : "";
+  return path.split(/[\\/]/).pop() || `${props.note.id}.md`;
+});
+
 const subtitle = computed(() => {
   if (!props.note) return "";
   const mode = autosaveEnabled.value ? "auto-saves" : "manual save";
-  return `${props.note.id}.md • Markdown editor (${mode})`;
+  return `${fileName.value} • Markdown editor (${mode})`;
 });
 const previewLines = computed(() => renderMarkdownPreviewLines(draft.value));
 
@@ -173,6 +183,27 @@ const openReminder = async () => {
   debouncedSave.cancel?.();
   await persistNow({ syncReminder: true });
   reminderOpen.value = true;
+};
+
+// Persist before opening so the version you're looking at in the diff is the
+// version on disk — otherwise unsaved edits read as "no changes since".
+const openHistory = async () => {
+  if (mobileActionsOpen.value) {
+    await requestCloseMobileActions();
+    await nextTick();
+  }
+  debouncedSave.cancel?.();
+  await persistNow({ syncReminder: true });
+  historyOpen.value = true;
+};
+
+// The backend already wrote the restored text to disk, so adopt it as the
+// saved baseline too — treating it as a pending edit would immediately mark
+// the note dirty and re-save identical content.
+const onRestored = (content) => {
+  draft.value = content ?? "";
+  lastSaved.value = draft.value;
+  status.value = "Restored";
 };
 
 const openMobileActions = () => {
@@ -340,6 +371,7 @@ watch(
       }
     } else if (prev) {
       reminderOpen.value = false;
+      historyOpen.value = false;
       mobileActionsOpen.value = false;
       debouncedSave.cancel?.();
       cleanupViewport();
@@ -426,6 +458,14 @@ onBeforeUnmount(() => {
               @click="openReminder"
             >
               {{ hasReminder ? "🔔 Reminder" : "Reminder" }}
+            </button>
+            <button
+              type="button"
+              class="note-history-button"
+              aria-label="Version history"
+              @click="openHistory"
+            >
+              History
             </button>
             <button
               type="button"
@@ -532,6 +572,13 @@ onBeforeUnmount(() => {
         </button>
         <button
           type="button"
+          class="note-actions-menu__item"
+          @click="openHistory"
+        >
+          Version history
+        </button>
+        <button
+          type="button"
           class="note-actions-menu__item note-actions-menu__item--danger"
           @click="handleDelete"
         >
@@ -545,5 +592,12 @@ onBeforeUnmount(() => {
     :open="reminderOpen"
     :note="note"
     @close="reminderOpen = false"
+  />
+
+  <HistoryModal
+    :open="historyOpen"
+    :note="note"
+    @close="historyOpen = false"
+    @restored="onRestored"
   />
 </template>

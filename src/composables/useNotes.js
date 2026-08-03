@@ -1,8 +1,9 @@
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
-// Central store + backend bridge for notes. Each note is { id, path, content }.
-// The Rust side persists one markdown file per note in the app data dir.
+// Central store + backend bridge for notes. Each note is
+// { id, path, content, folder, mtime, hash }. The Rust side persists one
+// markdown file per note under the configured vault root.
 export function useNotes() {
   const notes = ref([]);
   const ready = ref(false);
@@ -28,6 +29,8 @@ export function useNotes() {
       path: res.path ?? "",
       content: res.content ?? "",
       folder: res.folder ?? "General",
+      mtime: res.mtime ?? 0,
+      hash: res.hash ?? "",
     };
     // Backend lists newest-first; keep the same order in the UI.
     notes.value.unshift(note);
@@ -35,9 +38,13 @@ export function useNotes() {
   };
 
   const updateNote = async (id, content) => {
-    await invoke("update_note", { req: { id, content } });
+    // Retitling renames the file, so the path we hold can go stale.
+    const path = await invoke("update_note", { req: { id, content } });
     const n = notes.value.find((x) => x.id === id);
-    if (n) n.content = content;
+    if (n) {
+      n.content = content;
+      n.path = path ?? n.path;
+    }
   };
 
   const deleteNote = async (id) => {

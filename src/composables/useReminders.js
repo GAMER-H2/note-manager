@@ -205,6 +205,23 @@ export function useReminders() {
     }
   };
 
+  // Re-reads the store, bypassing the load-once guard, after an import or sync
+  // pull has rewritten it. Callers should follow with `rescheduleAllReminders`,
+  // since anything newly arrived exists only on disk — it has no notification
+  // scheduled on this device yet.
+  const reloadReminders = async () => {
+    try {
+      const raw = await invoke("get_reminders");
+      const parsed = JSON.parse(raw || "{}");
+      Object.keys(reminders).forEach((key) => delete reminders[key]);
+      Object.assign(reminders, parsed);
+    } catch (e) {
+      console.warn("Failed to reload reminders:", e);
+    } finally {
+      loaded = true;
+    }
+  };
+
   const getReminder = (noteId) => (noteId ? reminders[noteId] ?? null : null);
 
   // Schedule (or reschedule) a reminder for a note. `note` must carry the
@@ -297,6 +314,7 @@ export function useReminders() {
   return {
     reminders,
     loadReminders,
+    reloadReminders,
     getReminder,
     saveReminder,
     refreshReminder,
