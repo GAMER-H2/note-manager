@@ -78,6 +78,29 @@ npx tauri android build    # Android APK/AAB
 
 Desktop bundles land in `src-tauri/target/release/bundle/`.
 
+## GitHub releases
+
+Publishing a GitHub release triggers `.github/workflows/release.yml`, which runs
+these production builds and attaches their outputs to that release:
+
+- Windows x86_64
+- macOS ARM64
+- Linux x86_64 and ARM64
+- Android ARM64 APK and AAB
+
+The Android job follows the Android setup above and builds with
+`npx tauri android build --target aarch64 --split-per-abi --apk --aab`.
+To publish installable, consistently signed Android files, configure these
+repository secrets with a release keystore:
+
+- `ANDROID_KEY_BASE64` — base64-encoded contents of the keystore
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+Without those secrets, the workflow still attaches unsigned Android build
+outputs. The workflow can also be started manually from the Actions tab by
+providing the existing release tag.
+
 ## Where notes live
 
 Notes are saved as markdown files under the **vault root**, one file per note,
