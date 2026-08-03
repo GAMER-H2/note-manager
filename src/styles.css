@@ -767,10 +767,12 @@ body.settings-open {
 
 .settings-modal__content {
     width: min(840px, 100%);
-    max-height: min(640px, 90vh);
+    /* A fixed height, not a max: the modal should be the same size whichever
+       category is open, rather than resizing to fit the shortest panel. */
+    height: min(640px, 90vh);
     display: grid;
     grid-template-columns: 240px 1fr;
-    grid-template-rows: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
     background: var(--surface);
     border-radius: 18px;
     border: 1px solid rgba(255, 255, 255, 0.04);
@@ -781,12 +783,21 @@ body.settings-open {
 }
 
 .settings-categories {
+    grid-row: 1;
+    grid-column: 1;
     padding: 28px 24px;
     background: linear-gradient(180deg, #161b27 0%, #10131d 100%);
     border-right: 1px solid rgba(255, 255, 255, 0.04);
     display: flex;
     flex-direction: column;
     gap: 16px;
+    min-height: 0;
+}
+.settings-categories__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
 }
 .settings-categories h2 {
     margin: 0 0 4px;
@@ -820,10 +831,32 @@ body.settings-open {
 
 /* Details pane: fixed header, scrolling middle, pinned footer. */
 .settings-details {
+    grid-row: 1;
+    grid-column: 2;
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+}
+
+.settings-back-button {
+    appearance: none;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+.settings-back-button:hover {
+    background: rgba(255, 255, 255, 0.06);
 }
 .settings-details header h3 {
     margin: 0;
@@ -919,6 +952,8 @@ body.settings-open {
 }
 
 .settings-modal__footer {
+    grid-row: 2;
+    grid-column: 1 / -1;
     display: flex;
     justify-content: flex-end;
     gap: 12px;
@@ -1069,46 +1104,72 @@ body.settings-open {
         height: 100dvh;
         max-height: none;
         border-radius: 0;
+        /* One pane at a time: the category list or the chosen page, never
+           both. Whichever is visible takes the single content row. */
         grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: minmax(0, 1fr) auto;
+    }
+    /* Both panes claim the same cell — only one is ever rendered on mobile. */
+    .settings-categories,
+    .settings-details {
+        grid-row: 1;
+        grid-column: 1;
     }
     .settings-categories {
         border-right: none;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-        flex-direction: row;
-        flex-wrap: wrap;
+        flex-direction: column;
         gap: 10px;
-        /* Reserve top space for the safe area and right space for the close
-           button, which is pinned to the top-right corner on mobile. */
-        padding: calc(18px + env(safe-area-inset-top)) 56px 0 20px;
+        overflow-y: auto;
+        padding: calc(18px + env(safe-area-inset-top)) 20px 20px;
     }
-    .settings-categories h2 {
-        flex-basis: 100%;
+    /* Full-width rows that read as a list of pages to drill into, the way
+       Android settings screens work. */
+    .settings-category {
+        padding: 16px 14px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        color: var(--text);
+        font-size: 15px;
     }
-    .settings-categories nav {
-        display: contents;
+    .settings-category::after {
+        content: "›";
+        float: right;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1;
     }
-    /* The close button lives inside the details pane in the DOM; on mobile the
-       details pane is the second row, so pin the button to the top-right of the
-       whole modal instead of letting it sit halfway down the screen. */
-    .settings-close-button {
-        position: absolute;
-        top: calc(14px + env(safe-area-inset-top));
-        right: 14px;
-        z-index: 3;
+    /* Selection is expressed by which page you're on, so don't also highlight
+       the row you came from when you navigate back. */
+    .settings-category[aria-selected="true"] {
+        background: var(--surface-2);
+        border-color: var(--border);
     }
-    /* Details fills the second row; only .settings-scroll scrolls, so the
-       Apply/Cancel footer stays pinned to the bottom of the screen. */
     .settings-details {
         min-height: 0;
         overflow: hidden;
+    }
+    .settings-details__header {
+        align-items: center;
+        padding-top: calc(18px + env(safe-area-inset-top));
     }
     .settings-toggle {
         flex-direction: column;
         align-items: flex-start;
     }
+    /* Stacked rows hold full-width controls; `flex-start` above would shrink
+       inputs and selects to their intrinsic width instead. */
+    .settings-toggle--stack {
+        align-items: stretch;
+    }
     .settings-select {
         width: 100%;
+    }
+    .settings-field-row {
+        flex-wrap: nowrap;
+    }
+    .settings-input {
+        /* 16px keeps mobile browsers from zooming in on focus. */
+        font-size: 16px;
     }
     .settings-modal__footer {
         flex-direction: column-reverse;
@@ -2143,10 +2204,14 @@ body.note-open {
 }
 
 .settings-input {
-    flex: 1;
+    /* Full width by default: standalone inputs (the WebDAV URL, username and
+       password) sit directly in a stacked row, where `flex: 1` would stretch
+       them down the column rather than across it. */
+    width: 100%;
+    flex: 0 0 auto;
     min-width: 0;
     appearance: none;
-    height: 38px;
+    height: 42px;
     padding: 0 12px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
@@ -2154,7 +2219,13 @@ body.note-open {
     color: var(--text);
     font: inherit;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12.5px;
+    font-size: 13.5px;
+}
+/* Paired with a button (the vault/sync folder pickers), the input shares the
+   row instead, so it grows horizontally and gives the button its width back. */
+.settings-field-row .settings-input {
+    flex: 1 1 auto;
+    width: auto;
 }
 .settings-input:focus {
     outline: none;

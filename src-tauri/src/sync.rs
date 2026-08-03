@@ -199,17 +199,48 @@ fn save_state(app: &tauri::AppHandle, state: &SyncState) -> Result<(), String> {
 }
 
 /// Remote path a note occupies, mirroring the local layout.
-fn remote_note_path(folder: &str, id: &str) -> String {
-    format!("{folder}/{id}.md")
+fn remote_note_path(folder: &str, id: &str, content: &str, titled: bool) -> String {
+    format!(
+        "{folder}/{}",
+        notes::note_file_name_with(content, id, titled)
+    )
+}
+
+/// Writes a note to the remote under its current name, then removes any other
+/// path the same note used to occupy.
+///
+/// The cleanup is what makes retitling safe: without it the old filename
+/// lingers and the next listing sees two files claiming one id. It's
+/// best-effort — a leftover is tidied on the next sync, whereas failing here
+/// would abort a sync that has already written the note successfully.
+fn put_note(
+    remote: &dyn SyncRemote,
+    folder: &str,
+    id: &str,
+    content: &str,
+    titled: bool,
+    previous_paths: Option<&Vec<String>>,
+) -> Result<(), String> {
+    let path = remote_note_path(folder, id, content, titled);
+    remote.put(&path, content.as_bytes())?;
+
+    if let Some(paths) = previous_paths {
+        for stale in paths.iter().filter(|p| *p != &path) {
+            let _ = remote.delete(stale);
+        }
+    }
+    Ok(())
 }
 
 fn note_id_from_remote(path: &str) -> Option<(String, String)> {
     let stem = path.strip_suffix(".md")?;
-    let (folder, id) = stem.rsplit_once('/')?;
+    let (folder, stem) = stem.rsplit_once('/')?;
     if folder.starts_with(REMOTE_META) {
         return None;
     }
-    Some((folder.to_string(), id.to_string()))
+    // Accepts both `id.md` and `Title--id.md`, using the same extraction the
+    // local vault uses, so the two can never disagree about a note's identity.
+    Some((folder.to_string(), notes::id_from_stem(stem).to_string()))
 }
 
 /// Writes the remote's copy of a note alongside ours under a new id, for when
@@ -278,6 +309,26 @@ fn merge_pinned_json(local: &str, remote: &str) -> String {
 
 /// Unions two reminder maps, local winning on overlap — the local entry has a
 /// notification actually scheduled on this device behind it.
+/// Newest write wins, by the `updatedAt` stamp each device sets when it changes
+/// the setting.
+///
+/// Deliberately not a union like the two below: a union of booleans would make
+/// the setting impossible to turn back off, because whichever device still had
+/// it on would keep re-enabling it on every sync.
+fn merge_vault_settings_json(local: &str, remote: &str) -> String {
+    let parse = |raw: &str| serde_json::from_str::<config::VaultSettings>(raw).ok();
+
+    match (parse(local), parse(remote)) {
+        (Some(l), Some(r)) => {
+            let winner = if r.updated_at > l.updated_at { &r } else { &l };
+            serde_json::to_string(winner).unwrap_or_else(|_| local.to_string())
+        }
+        // An unreadable side is treated as absent rather than as a reset.
+        (None, Some(_)) => remote.to_string(),
+        _ => local.to_string(),
+    }
+}
+
 fn merge_reminders_json(local: &str, remote: &str) -> String {
     let mut out: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(local).unwrap_or_default();
@@ -295,15 +346,53 @@ fn run_sync(app: &tauri::AppHandle, remote: &dyn SyncRemote) -> Result<SyncRepor
     let remote_id = remote.id();
     let mut state = load_state(app, &remote_id)?;
 
+    // Settle the vault's filename convention before anything else: it decides
+    // what remote paths look like, and a device joining a vault adopts the
+    // vault's choice rather than imposing its own.
+    let titled_before = config::titled_filenames(app);
+    sync_meta_file(
+        app,
+        remote,
+        "vault-settings.json",
+        &mut report,
+        merge_vault_settings_json,
+    )?;
+    let titled = config::titled_filenames(app);
+
+    // Another device changed the convention, so bring local files into line
+    // before listing them — otherwise this pass would push every note back
+    // under its old name.
+    if titled != titled_before {
+        if let Err(e) = notes::restyle_note_filenames(app.clone()) {
+            report.errors.push(format!("renaming notes: {e}"));
+        }
+    }
+
     let local_notes = notes::list_notes(app.clone())?;
     let local_by_id: HashMap<String, &notes::NoteRecord> =
         local_notes.iter().map(|n| (n.id.clone(), n)).collect();
 
     let remote_entries = remote.list()?;
+    // A note can briefly occupy two remote paths — a retitle writes the new
+    // name and removes the old, and the removal can fail. Track every path per
+    // id so the leftovers get cleaned up rather than resurfacing as a second
+    // copy of the same note.
+    let mut remote_paths_by_id: HashMap<String, Vec<String>> = HashMap::new();
     let mut remote_by_id: HashMap<String, (String, String)> = HashMap::new(); // id -> (folder, path)
     for entry in &remote_entries {
         if let Some((folder, id)) = note_id_from_remote(&entry.path) {
-            remote_by_id.insert(id, (folder, entry.path.clone()));
+            remote_paths_by_id
+                .entry(id.clone())
+                .or_default()
+                .push(entry.path.clone());
+            // Deterministic pick, so two devices seeing the same duplicate pair
+            // resolve it the same way instead of racing.
+            match remote_by_id.get(&id) {
+                Some((_, existing)) if existing <= &entry.path => {}
+                _ => {
+                    remote_by_id.insert(id, (folder, entry.path.clone()));
+                }
+            }
         }
     }
 
@@ -320,6 +409,9 @@ fn run_sync(app: &tauri::AppHandle, remote: &dyn SyncRemote) -> Result<SyncRepor
         let local = local_by_id.get(&id);
         let remote_ref = remote_by_id.get(&id);
         let base_hash = state.notes.get(&id).cloned();
+        // Every remote path currently holding this note, so a push can retire
+        // the ones it no longer occupies.
+        let prev = remote_paths_by_id.get(&id);
 
         let remote_content = match remote_ref {
             Some((_, path)) => match remote.get(path) {
@@ -364,8 +456,7 @@ fn run_sync(app: &tauri::AppHandle, remote: &dyn SyncRemote) -> Result<SyncRepor
                     }
                     // Changed here, unchanged there: keep ours.
                     Some(base) if notes::content_hash(&base) == rh => {
-                        let path = remote_note_path(&local.folder, &id);
-                        remote.put(&path, local.content.as_bytes())?;
+                        put_note(remote, &local.folder, &id, &local.content, titled, prev)?;
                         report.pushed += 1;
                         next_state_notes.insert(id.clone(), lh.clone());
                     }
@@ -374,14 +465,12 @@ fn run_sync(app: &tauri::AppHandle, remote: &dyn SyncRemote) -> Result<SyncRepor
                         let merged = diff::merge3(&base, &local.content, rc);
                         if merged.conflicted {
                             write_conflict_copy(app, &local.folder, rc, &device)?;
-                            let path = remote_note_path(&local.folder, &id);
-                            remote.put(&path, local.content.as_bytes())?;
+                            put_note(remote, &local.folder, &id, &local.content, titled, prev)?;
                             report.conflicts += 1;
                             next_state_notes.insert(id.clone(), lh.clone());
                         } else {
                             apply_incoming(app, &id, &merged.text)?;
-                            let path = remote_note_path(&local.folder, &id);
-                            remote.put(&path, merged.text.as_bytes())?;
+                            put_note(remote, &local.folder, &id, &merged.text, titled, prev)?;
                             report.merged += 1;
                             next_state_notes.insert(id.clone(), notes::content_hash(&merged.text));
                         }
@@ -390,8 +479,7 @@ fn run_sync(app: &tauri::AppHandle, remote: &dyn SyncRemote) -> Result<SyncRepor
                     // Keeping both is the only choice that can't lose an edit.
                     None => {
                         write_conflict_copy(app, &local.folder, rc, &device)?;
-                        let path = remote_note_path(&local.folder, &id);
-                        remote.put(&path, local.content.as_bytes())?;
+                        put_note(remote, &local.folder, &id, &local.content, titled, prev)?;
                         report.conflicts += 1;
                         next_state_notes.insert(id.clone(), lh.clone());
                     }
@@ -410,8 +498,7 @@ fn run_sync(app: &tauri::AppHandle, remote: &dyn SyncRemote) -> Result<SyncRepor
                 } else {
                     // New here, or edited here after they deleted it — an edit
                     // outranks a delete, so it comes back.
-                    let path = remote_note_path(&local.folder, &id);
-                    remote.put(&path, local.content.as_bytes())?;
+                    put_note(remote, &local.folder, &id, &local.content, titled, prev)?;
                     report.pushed += 1;
                     next_state_notes.insert(id.clone(), local.hash.clone());
                 }
@@ -458,6 +545,8 @@ fn run_sync(app: &tauri::AppHandle, remote: &dyn SyncRemote) -> Result<SyncRepor
 /// Counting is left to callers, since the same write means "pulled" in one
 /// branch and "merged" in another.
 fn apply_incoming(app: &tauri::AppHandle, id: &str, content: &str) -> Result<(), String> {
+    // The path it returns is the note's new local filename (an incoming retitle
+    // renames the file); sync addresses notes by id, so nothing here needs it.
     notes::update_note(
         app.clone(),
         notes::UpdateNoteRequest {
@@ -465,6 +554,7 @@ fn apply_incoming(app: &tauri::AppHandle, id: &str, content: &str) -> Result<(),
             content: content.to_string(),
         },
     )
+    .map(|_| ())
 }
 
 fn create_from_remote(
@@ -492,6 +582,7 @@ fn sync_meta_file(
     let remote_path = format!("{REMOTE_META}/{name}");
     let local = match name {
         "pinned.json" => crate::read_pinned_raw(app)?,
+        "vault-settings.json" => config::read_vault_settings_raw(app)?,
         _ => crate::read_reminders_raw(app)?,
     };
 
@@ -512,6 +603,7 @@ fn sync_meta_file(
     if merged != local {
         let result = match name {
             "pinned.json" => crate::write_pinned_raw(app, &merged),
+            "vault-settings.json" => config::write_vault_settings_raw(app, &merged),
             _ => crate::write_reminders_raw(app, &merged),
         };
         if let Err(e) = result {
@@ -584,13 +676,14 @@ fn credential_account(cfg: &config::SyncConfig) -> String {
     format!("webdav:{}:{}", cfg.url.trim_end_matches('/'), cfg.username)
 }
 
-fn build_remote(cfg: &config::SyncConfig) -> Result<Box<dyn SyncRemote>, String> {
-    build_remote_with(cfg, None)
+fn build_remote(app: &tauri::AppHandle, cfg: &config::SyncConfig) -> Result<Box<dyn SyncRemote>, String> {
+    build_remote_with(app, cfg, None)
 }
 
 /// `password` is supplied only while testing a not-yet-saved remote; otherwise
 /// it comes from the keychain, since it's never held in the config.
 fn build_remote_with(
+    app: &tauri::AppHandle,
     cfg: &config::SyncConfig,
     password: Option<&str>,
 ) -> Result<Box<dyn SyncRemote>, String> {
@@ -599,7 +692,7 @@ fn build_remote_with(
         "webdav" => {
             let pass = match password {
                 Some(p) => p.to_string(),
-                None => crate::secrets::get_password(&credential_account(cfg)).unwrap_or_default(),
+                None => crate::secrets::get_password(app, &credential_account(cfg)).unwrap_or_default(),
             };
             Ok(Box::new(crate::webdav::WebDavRemote::new(
                 &cfg.url,
@@ -611,39 +704,54 @@ fn build_remote_with(
     }
 }
 
+/// `async` on purpose: Tauri runs synchronous commands on the main thread, and
+/// a sync is seconds of blocking HTTP and file I/O — enough to freeze the
+/// webview. `spawn_blocking` keeps that work off both the UI thread and the
+/// async runtime's worker threads.
 #[tauri::command]
-pub fn sync_now(app: tauri::AppHandle) -> Result<SyncReport, String> {
-    let cfg = config::sync_config(&app).ok_or("Sync isn't set up yet.")?;
-    let remote = build_remote(&cfg)?;
-    run_sync(&app, remote.as_ref())
+pub async fn sync_now(app: tauri::AppHandle) -> Result<SyncReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = config::sync_config(&app).ok_or("Sync isn't set up yet.")?;
+        let remote = build_remote(&app, &cfg)?;
+        run_sync(&app, remote.as_ref())
+    })
+    .await
+    .map_err(|e| format!("Sync task failed to run: {e}"))?
 }
 
 /// Verifies a remote is reachable and writable before the user saves it, and
 /// files the password on success so it's only persisted once proven.
+/// Off the main thread for the same reason as `sync_now`: reaching an
+/// unresponsive server can block for the full connect timeout.
 #[tauri::command]
-pub fn test_sync_remote(
+pub async fn test_sync_remote(
+    app: tauri::AppHandle,
     cfg: config::SyncConfig,
     password: Option<String>,
 ) -> Result<String, String> {
-    let remote = build_remote_with(&cfg, password.as_deref())?;
-    let probe = format!("{REMOTE_META}/.probe");
-    remote.put(&probe, b"ok")?;
-    remote.delete(&probe)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let remote = build_remote_with(&app, &cfg, password.as_deref())?;
+        let probe = format!("{REMOTE_META}/.probe");
+        remote.put(&probe, b"ok")?;
+        remote.delete(&probe)?;
 
-    if cfg.kind == "webdav" {
-        if let Some(p) = password {
-            crate::secrets::set_password(&credential_account(&cfg), &p)?;
+        if cfg.kind == "webdav" {
+            if let Some(p) = password {
+                crate::secrets::set_password(&app, &credential_account(&cfg), &p)?;
+            }
         }
-    }
 
-    Ok(format!("Connected to {}", remote.id()))
+        Ok(format!("Connected to {}", remote.id()))
+    })
+    .await
+    .map_err(|e| format!("Connection test failed to run: {e}"))?
 }
 
 /// Whether a password is already on file, so the UI can show "saved" rather
 /// than an empty box that looks like the credential was lost.
 #[tauri::command]
-pub fn has_stored_password(cfg: config::SyncConfig) -> Result<bool, String> {
-    Ok(crate::secrets::get_password(&credential_account(&cfg))
+pub fn has_stored_password(app: tauri::AppHandle, cfg: config::SyncConfig) -> Result<bool, String> {
+    Ok(crate::secrets::get_password(&app, &credential_account(&cfg))
         .map(|p| !p.is_empty())
         .unwrap_or(false))
 }
@@ -651,7 +759,7 @@ pub fn has_stored_password(cfg: config::SyncConfig) -> Result<bool, String> {
 #[tauri::command]
 pub fn get_last_sync(app: tauri::AppHandle) -> Result<u64, String> {
     let remote_id = config::sync_config(&app)
-        .and_then(|c| build_remote(&c).ok())
+        .and_then(|c| build_remote(&app, &c).ok())
         .map(|r| r.id())
         .unwrap_or_default();
     Ok(load_state(&app, &remote_id)?.last_sync_at)
@@ -676,6 +784,88 @@ mod tests {
         let map: serde_json::Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(map["n1"]["at"], "local");
         assert_eq!(map["n2"]["at"], "x");
+    }
+
+    #[test]
+    fn newer_vault_setting_wins_in_either_direction() {
+        let older = r#"{"titledFilenames":false,"updatedAt":100}"#;
+        let newer = r#"{"titledFilenames":true,"updatedAt":200}"#;
+
+        // Remote newer: adopt it, which is how a device joining a vault picks
+        // up the vault's convention.
+        let merged = merge_vault_settings_json(older, newer);
+        assert!(serde_json::from_str::<config::VaultSettings>(&merged)
+            .unwrap()
+            .titled_filenames);
+
+        // Local newer: keep ours, so turning it back off actually sticks.
+        let merged = merge_vault_settings_json(newer, older);
+        assert!(serde_json::from_str::<config::VaultSettings>(&merged)
+            .unwrap()
+            .titled_filenames);
+    }
+
+    #[test]
+    fn vault_setting_can_be_turned_off_across_devices() {
+        // The union merge used for pins would make "off" impossible to
+        // propagate; newest-wins must not have that flaw.
+        let on = r#"{"titledFilenames":true,"updatedAt":100}"#;
+        let off = r#"{"titledFilenames":false,"updatedAt":300}"#;
+        let merged = merge_vault_settings_json(on, off);
+        assert!(!serde_json::from_str::<config::VaultSettings>(&merged)
+            .unwrap()
+            .titled_filenames);
+    }
+
+    #[test]
+    fn unreadable_vault_settings_do_not_reset_the_choice() {
+        let good = r#"{"titledFilenames":true,"updatedAt":100}"#;
+        let merged = merge_vault_settings_json(good, "not json");
+        assert!(serde_json::from_str::<config::VaultSettings>(&merged)
+            .unwrap()
+            .titled_filenames);
+    }
+
+    #[test]
+    fn titled_remote_paths_round_trip_to_the_same_id() {
+        let path = remote_note_path("Work", "note_1_a", "# Project Kickoff\n\nbody", true);
+        assert_eq!(path, "Work/Project Kickoff--note_1_a.md");
+        assert_eq!(
+            note_id_from_remote(&path),
+            Some(("Work".to_string(), "note_1_a".to_string()))
+        );
+    }
+
+    #[test]
+    fn untitled_and_titled_remote_names_resolve_to_one_identity() {
+        // Both layouts must map to the same id, or upgrading the setting would
+        // make every existing note look like a brand-new one.
+        assert_eq!(
+            note_id_from_remote("Work/note_1_a.md"),
+            note_id_from_remote("Work/Some Title--note_1_a.md")
+        );
+    }
+
+    #[test]
+    fn retitling_retires_the_old_remote_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote = FolderRemote::new(dir.path().to_str().unwrap()).unwrap();
+        let old = "Work/Old Name--note_1_a.md";
+        remote.put(old, b"# Old Name").unwrap();
+
+        put_note(
+            &remote,
+            "Work",
+            "note_1_a",
+            "# New Name",
+            true,
+            Some(&vec![old.to_string()]),
+        )
+        .unwrap();
+
+        let paths: Vec<String> = remote.list().unwrap().into_iter().map(|e| e.path).collect();
+        assert!(paths.contains(&"Work/New Name--note_1_a.md".to_string()));
+        assert!(!paths.contains(&old.to_string()), "old name should be gone");
     }
 
     #[test]

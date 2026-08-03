@@ -13,7 +13,7 @@
 const SERVICE: &str = "com.mh968.note-manager";
 
 #[cfg(not(target_os = "android"))]
-pub fn set_password(account: &str, password: &str) -> Result<(), String> {
+pub fn set_password(_app: &tauri::AppHandle, account: &str, password: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(SERVICE, account)
         .map_err(|e| format!("Failed to open keychain: {e}"))?;
 
@@ -31,7 +31,7 @@ pub fn set_password(account: &str, password: &str) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "android"))]
-pub fn get_password(account: &str) -> Option<String> {
+pub fn get_password(_app: &tauri::AppHandle, account: &str) -> Option<String> {
     keyring::Entry::new(SERVICE, account)
         .ok()?
         .get_password()
@@ -39,18 +39,17 @@ pub fn get_password(account: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "android")]
-fn fallback_path(account: &str) -> Result<std::path::PathBuf, String> {
-    // Android's app data dir is resolved lazily here rather than passed in, so
-    // the desktop path doesn't have to carry an AppHandle it never uses.
-    let base = std::env::var("HOME").map_err(|_| "No home directory".to_string())?;
-    let dir = std::path::PathBuf::from(base).join(".note-manager-credentials");
+fn fallback_path(app: &tauri::AppHandle, account: &str) -> Result<std::path::PathBuf, String> {
+    // `HOME` isn't set in an Android app's process environment, so the app
+    // data dir has to come from Tauri's path resolver instead.
+    let dir = crate::config::app_data_dir(app)?.join(".note-manager-credentials");
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create credential dir: {e}"))?;
     Ok(dir.join(format!("{}.secret", crate::notes::sanitize_id(account))))
 }
 
 #[cfg(target_os = "android")]
-pub fn set_password(account: &str, password: &str) -> Result<(), String> {
-    let path = fallback_path(account)?;
+pub fn set_password(app: &tauri::AppHandle, account: &str, password: &str) -> Result<(), String> {
+    let path = fallback_path(app, account)?;
     if password.is_empty() {
         let _ = std::fs::remove_file(&path);
         return Ok(());
@@ -59,6 +58,6 @@ pub fn set_password(account: &str, password: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
-pub fn get_password(account: &str) -> Option<String> {
-    std::fs::read_to_string(fallback_path(account).ok()?).ok()
+pub fn get_password(app: &tauri::AppHandle, account: &str) -> Option<String> {
+    std::fs::read_to_string(fallback_path(app, account).ok()?).ok()
 }

@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref, watch, onBeforeUnmount } from "vue";
+import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { useSettings, THEMES } from "../composables/useSettings.js";
 import {
   URGENCY_LEVELS,
@@ -8,6 +9,7 @@ import {
 import { useReminders } from "../composables/useReminders.js";
 import { useArchive } from "../composables/useArchive.js";
 import { useSync } from "../composables/useSync.js";
+import { AUTO_SYNC_INTERVALS } from "../composables/useAutoSync.js";
 import { useVault } from "../composables/useVault.js";
 import { isAndroid } from "../lib/platform.js";
 import { useOverlayHistory } from "../composables/useOverlayHistory.js";
@@ -35,15 +37,52 @@ const categories = [
   { id: "general", title: "General" },
   { id: "notifications", title: "Notifications" },
   { id: "appearance", title: "Appearance" },
+  { id: "vault", title: "Vault" },
   { id: "sync", title: "Sync" },
+  { id: "backup", title: "Import & export" },
 ];
 
 const descriptions = {
   general: "Configure behavior and accessibility preferences.",
   notifications: "Control how reminder notifications behave.",
   appearance: "Choose how the app looks.",
-  sync: "Back up, restore, and move your notes.",
+  vault: "Where your notes live on this device.",
+  sync: "Keep this device's notes in step with your others.",
+  backup: "Move notes in and out as a zip archive.",
 };
+
+// Mobile shows one pane at a time — the category list, then the chosen page —
+// rather than desktop's side-by-side layout. Matches the CSS breakpoint.
+const settingsMql = window.matchMedia("(max-width: 720px)");
+const isMobileSettings = ref(settingsMql.matches);
+const mobileView = ref("list"); // "list" | "detail"
+
+const onSettingsBreakpoint = (e) => {
+  isMobileSettings.value = e.matches;
+};
+
+// On desktop both panes are always up; on mobile exactly one is.
+const showCategories = computed(
+  () => !isMobileSettings.value || mobileView.value === "list",
+);
+const showDetails = computed(
+  () => !isMobileSettings.value || mobileView.value === "detail",
+);
+
+const openCategory = (id) => {
+  activeCategory.value = id;
+  mobileView.value = "detail";
+};
+
+// Drilling into a category gets its own history entry, so Android's back
+// button returns to the category list instead of closing settings outright.
+// Pushed on top of the modal's own entry, so back unwinds detail → list → closed.
+const { requestClose: requestCloseDetail } = useOverlayHistory(
+  () => isMobileSettings.value && mobileView.value === "detail",
+  () => {
+    mobileView.value = "list";
+  },
+);
 
 const {
   config: syncConfig,
@@ -97,7 +136,6 @@ const candidateSync = () => ({
   path: syncFolder.value.trim(),
   url: syncUrl.value.trim(),
   username: syncUsername.value.trim(),
-  auto: false,
 });
 
 const syncReady = computed(() =>
@@ -154,11 +192,27 @@ const onImport = async () => {
 const draftAutosave = ref(true);
 const draftUrgency = ref("default");
 const draftTheme = ref("dark");
+const draftAutoSyncMinutes = ref(0);
+const draftTitledFilenames = ref(false);
+// Vault-scoped, so it's read from the vault rather than the settings store —
+// and can change under us when a sync brings another device's newer choice.
+const savedTitledFilenames = ref(false);
 
 const syncDraftFromSaved = () => {
   draftAutosave.value = settings.autosave;
   draftUrgency.value = settings.urgency;
   draftTheme.value = settings.theme;
+  draftAutoSyncMinutes.value = settings.autoSyncMinutes;
+};
+
+const loadVaultSettings = async () => {
+  try {
+    savedTitledFilenames.value = await invoke("get_titled_filenames");
+  } catch (e) {
+    console.warn("Failed to read vault settings:", e);
+    savedTitledFilenames.value = false;
+  }
+  draftTitledFilenames.value = savedTitledFilenames.value;
 };
 
 const closeModal = () => emit("close");
@@ -167,13 +221,26 @@ const { requestClose } = useOverlayHistory(
   closeModal,
 );
 
+// Unwinds the category page first when one is open, so the modal's own history
+// entry is the one on top by the time we pop it. Closing straight from a detail
+// page would otherwise strand its entry and eat the next back press.
+const closeSettings = async () => {
+  if (isMobileSettings.value && mobileView.value === "detail") {
+    await requestCloseDetail();
+  }
+  await requestClose();
+};
+
 const applyChanges = async () => {
   const previousUrgency = settings.urgency;
+  const filenameStyleChanged =
+    savedTitledFilenames.value !== draftTitledFilenames.value;
 
   await saveSettings({
     autosave: draftAutosave.value,
     urgency: draftUrgency.value,
     theme: draftTheme.value,
+    autoSyncMinutes: draftAutoSyncMinutes.value,
   });
 
   if (androidOnly && previousUrgency !== draftUrgency.value) {
@@ -181,18 +248,40 @@ const applyChanges = async () => {
     await rescheduleAllReminders();
   }
 
-  requestClose();
+  // Existing notes keep their old names until they're rewritten, so re-style
+  // the whole vault once, after the setting is persisted for the backend to read.
+  if (filenameStyleChanged) {
+    try {
+      // Persist to the vault first — the rename pass reads the setting back
+      // from there — then bring existing notes into line with it.
+      await invoke("set_titled_filenames", {
+        enabled: draftTitledFilenames.value,
+      });
+      savedTitledFilenames.value = draftTitledFilenames.value;
+      const renamed = await invoke("restyle_note_filenames");
+      // Paths in the loaded note records are now stale.
+      if (renamed) emit("imported");
+    } catch (e) {
+      console.error("Failed to change note filename style:", e);
+    }
+  }
+
+  await closeSettings();
 };
 
 const onEsc = (e) => {
-  if (e.key === "Escape" && props.open) requestClose();
+  if (e.key === "Escape" && props.open) closeSettings();
 };
 
 watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
+      // Always land on the category list when reopening on mobile, rather
+      // than dropping the user back into whichever page they last visited.
+      mobileView.value = "list";
       syncDraftFromSaved();
+      loadVaultSettings();
       previewExport().then((p) => {
         exportPreview.value = p;
       });
@@ -217,15 +306,29 @@ watch(
   },
 );
 
+onMounted(() => {
+  if (typeof settingsMql.addEventListener === "function") {
+    settingsMql.addEventListener("change", onSettingsBreakpoint);
+  } else if (typeof settingsMql.addListener === "function") {
+    settingsMql.addListener(onSettingsBreakpoint); // Safari fallback
+  }
+});
+
 onBeforeUnmount(() => {
   document.documentElement.classList.remove("settings-open");
   document.body.classList.remove("settings-open");
   window.removeEventListener("keydown", onEsc);
+
+  if (typeof settingsMql.removeEventListener === "function") {
+    settingsMql.removeEventListener("change", onSettingsBreakpoint);
+  } else if (typeof settingsMql.removeListener === "function") {
+    settingsMql.removeListener(onSettingsBreakpoint);
+  }
 });
 </script>
 
 <template>
-  <div class="settings-overlay" :hidden="!open" @click="requestClose"></div>
+  <div class="settings-overlay" :hidden="!open" @click="closeSettings"></div>
   <section
     class="settings-modal"
     role="dialog"
@@ -234,8 +337,23 @@ onBeforeUnmount(() => {
     :aria-hidden="String(!open)"
   >
     <div class="settings-modal__content" role="document" tabindex="-1">
-      <aside class="settings-categories" aria-label="Settings categories">
-        <h2 id="settings-title">Settings</h2>
+      <aside
+        v-show="showCategories"
+        class="settings-categories"
+        aria-label="Settings categories"
+      >
+        <div class="settings-categories__header">
+          <h2 id="settings-title">Settings</h2>
+          <button
+            v-if="isMobileSettings"
+            type="button"
+            class="settings-close-button"
+            aria-label="Close settings"
+            @click="closeSettings"
+          >
+            ×
+          </button>
+        </div>
         <nav role="tablist" aria-label="Settings categories list">
           <button
             v-for="cat in categories"
@@ -244,24 +362,34 @@ onBeforeUnmount(() => {
             class="settings-category"
             role="tab"
             :aria-selected="String(activeCategory === cat.id)"
-            @click="activeCategory = cat.id"
+            @click="openCategory(cat.id)"
           >
             {{ cat.title }}
           </button>
         </nav>
       </aside>
 
-      <div class="settings-details" role="tabpanel">
+      <div v-show="showDetails" class="settings-details" role="tabpanel">
         <header class="settings-details__header">
+          <button
+            v-if="isMobileSettings"
+            type="button"
+            class="settings-back-button"
+            aria-label="Back to settings categories"
+            @click="requestCloseDetail"
+          >
+            ‹
+          </button>
           <div>
             <h3>{{ categories.find((c) => c.id === activeCategory).title }}</h3>
             <p class="settings-description">{{ descriptions[activeCategory] }}</p>
           </div>
           <button
+            v-if="!isMobileSettings"
             type="button"
             class="settings-close-button"
             aria-label="Close settings"
-            @click="requestClose"
+            @click="closeSettings"
           >
             ×
           </button>
@@ -336,10 +464,8 @@ onBeforeUnmount(() => {
             </li>
           </ul>
 
-          <!-- Sync -->
-          <ul v-show="activeCategory === 'sync'" class="settings-toggle-list">
-            <li class="settings-section-heading">Where notes are stored</li>
-
+          <!-- Vault -->
+          <ul v-show="activeCategory === 'vault'" class="settings-toggle-list">
             <li class="settings-toggle settings-toggle--stack">
               <span>
                 <strong>Vault folder</strong>
@@ -369,8 +495,29 @@ onBeforeUnmount(() => {
               {{ vaultStatus.message }}
             </li>
 
-            <li class="settings-section-heading">Sync</li>
+            <li class="settings-toggle">
+              <span>
+                <strong>Put note titles in filenames</strong>
+                <small>
+                  Names files <code>Project Kickoff--a1b2c3.md</code> instead of
+                  <code>a1b2c3.md</code>, on this device and on your sync
+                  server. The trailing id is what sync and version history
+                  identify a note by, so it stays. Applies to notes you already
+                  have, and filenames follow the title as you edit it.
+                  <br />
+                  This one belongs to the vault, not the device — your other
+                  devices adopt it on their next sync.
+                </small>
+              </span>
+              <label class="switch">
+                <input type="checkbox" v-model="draftTitledFilenames" />
+                <span class="slider"></span>
+              </label>
+            </li>
+          </ul>
 
+          <!-- Sync -->
+          <ul v-show="activeCategory === 'sync'" class="settings-toggle-list">
             <li class="settings-toggle settings-toggle--stack">
               <span>
                 <strong>Sync method</strong>
@@ -455,6 +602,26 @@ onBeforeUnmount(() => {
               </li>
             </template>
 
+            <li class="settings-toggle">
+              <span>
+                <strong>Automatic sync</strong>
+                <small>
+                  Syncs on a timer while the app is open, and when you switch
+                  back to it. Paused while a note is open, so nothing is pulled
+                  out from under an edit.
+                </small>
+              </span>
+              <select class="settings-select" v-model="draftAutoSyncMinutes">
+                <option
+                  v-for="option in AUTO_SYNC_INTERVALS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </li>
+
             <li class="settings-toggle settings-toggle--stack">
               <span>
                 <small v-if="syncConfig">
@@ -504,9 +671,10 @@ onBeforeUnmount(() => {
             >
               {{ syncStatus.message }}
             </li>
+          </ul>
 
-            <li class="settings-section-heading">Import &amp; export</li>
-
+          <!-- Import & export -->
+          <ul v-show="activeCategory === 'backup'" class="settings-toggle-list">
             <li class="settings-toggle settings-toggle--stack">
               <span>
                 <strong>Export notes to a zip file</strong>
@@ -583,16 +751,18 @@ onBeforeUnmount(() => {
             </li>
           </ul>
         </div>
-
-        <footer class="settings-modal__footer">
-          <button type="button" class="settings-secondary" @click="requestClose">
-            Cancel
-          </button>
-          <button type="button" class="settings-primary" @click="applyChanges">
-            Apply Changes
-          </button>
-        </footer>
       </div>
+
+      <!-- Outside the details pane so Apply/Cancel stay reachable on mobile,
+           where the details pane is hidden behind the category list. -->
+      <footer class="settings-modal__footer">
+        <button type="button" class="settings-secondary" @click="closeSettings">
+          Cancel
+        </button>
+        <button type="button" class="settings-primary" @click="applyChanges">
+          Apply Changes
+        </button>
+      </footer>
     </div>
   </section>
 </template>

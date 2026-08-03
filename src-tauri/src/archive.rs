@@ -372,8 +372,9 @@ pub fn import_vault(
         fs::create_dir_all(&dir).map_err(|e| format!("Failed to create folder {folder}: {e}"))?;
         folders_seen.insert(folder.clone());
 
-        let _ = stem; // the title lives in the content; the file is id-named
-        fs::write(dir.join(format!("{}.md", notes::sanitize_id(&final_id))), &content)
+        let _ = stem; // the title comes back out of the content, not the entry name
+        let file_name = notes::note_file_name(&app, &content, &notes::sanitize_id(&final_id));
+        fs::write(dir.join(file_name), &content)
             .map_err(|e| format!("Failed to write imported note: {e}"))?;
         summary.imported += 1;
     }

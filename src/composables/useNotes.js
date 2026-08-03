@@ -38,9 +38,13 @@ export function useNotes() {
   };
 
   const updateNote = async (id, content) => {
-    await invoke("update_note", { req: { id, content } });
+    // Retitling renames the file, so the path we hold can go stale.
+    const path = await invoke("update_note", { req: { id, content } });
     const n = notes.value.find((x) => x.id === id);
-    if (n) n.content = content;
+    if (n) {
+      n.content = content;
+      n.path = path ?? n.path;
+    }
   };
 
   const deleteNote = async (id) => {

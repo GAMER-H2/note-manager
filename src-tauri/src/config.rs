@@ -36,9 +36,6 @@ pub struct SyncConfig {
     pub url: String,
     #[serde(default)]
     pub username: String,
-    /// Sync automatically on startup and after edits settle.
-    #[serde(default)]
-    pub auto: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +86,7 @@ fn generate_device_id(seed_path: &Path) -> String {
     format!("{:06x}", fnv1a64(seed.as_bytes()) & 0x00ff_ffff)
 }
 
-fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))
@@ -196,6 +193,73 @@ pub fn meta_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = vault_root(app)?.join(META_DIR);
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create metadata dir: {e}"))?;
     Ok(dir)
+}
+
+/// Settings that describe the *vault* rather than the device, so they live in
+/// the vault's metadata directory and travel over sync. A device joining a
+/// vault adopts its conventions instead of imposing its own.
+///
+/// `updated_at` exists because a boolean has no merge: without it, two devices
+/// disagreeing would each keep rewriting the other's choice on every sync.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultSettings {
+    /// Name note files `Title--id.md` rather than `id.md`, locally and on the
+    /// remote. Off keeps the original id-only naming.
+    #[serde(default)]
+    pub titled_filenames: bool,
+    /// Milliseconds since the epoch, stamped whenever a device changes this.
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
+fn vault_settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(meta_dir(app)?.join("vault-settings.json"))
+}
+
+pub fn read_vault_settings(app: &tauri::AppHandle) -> VaultSettings {
+    vault_settings_path(app)
+        .ok()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Raw JSON for the sync layer, which merges these as a file like any other.
+pub fn read_vault_settings_raw(app: &tauri::AppHandle) -> Result<String, String> {
+    let settings = read_vault_settings(app);
+    serde_json::to_string(&settings).map_err(|e| format!("Failed to serialize vault settings: {e}"))
+}
+
+pub fn write_vault_settings_raw(app: &tauri::AppHandle, data: &str) -> Result<(), String> {
+    let path = vault_settings_path(app)?;
+    fs::write(&path, data).map_err(|e| format!("Failed to write vault settings: {e}"))
+}
+
+/// Whether note files carry their title. Read straight off disk rather than
+/// cached: sync can change it mid-session when another device's newer choice
+/// arrives.
+pub fn titled_filenames(app: &tauri::AppHandle) -> bool {
+    read_vault_settings(app).titled_filenames
+}
+
+#[tauri::command]
+pub fn get_titled_filenames(app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(titled_filenames(&app))
+}
+
+#[tauri::command]
+pub fn set_titled_filenames(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let settings = VaultSettings {
+        titled_filenames: enabled,
+        updated_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    };
+    let json = serde_json::to_string(&settings)
+        .map_err(|e| format!("Failed to serialize vault settings: {e}"))?;
+    write_vault_settings_raw(&app, &json)
 }
 
 /// True when `dir` already holds a vault (notes or app metadata), meaning we

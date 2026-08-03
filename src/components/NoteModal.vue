@@ -65,10 +65,18 @@ const open = computed(() => !!props.note);
 const autosaveEnabled = computed(() => settings.autosave !== false);
 const dirty = computed(() => draft.value !== lastSaved.value);
 const title = computed(() => firstLineTitle(draft.value));
+// Real filename off the note's path rather than a reconstructed `<id>.md`,
+// so it reflects the titled-filename setting and stays right after a rename.
+const fileName = computed(() => {
+  const path = props.note?.path;
+  if (!path) return props.note ? `${props.note.id}.md` : "";
+  return path.split(/[\\/]/).pop() || `${props.note.id}.md`;
+});
+
 const subtitle = computed(() => {
   if (!props.note) return "";
   const mode = autosaveEnabled.value ? "auto-saves" : "manual save";
-  return `${props.note.id}.md • Markdown editor (${mode})`;
+  return `${fileName.value} • Markdown editor (${mode})`;
 });
 const previewLines = computed(() => renderMarkdownPreviewLines(draft.value));
 
