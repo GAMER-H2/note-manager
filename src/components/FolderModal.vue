@@ -60,6 +60,7 @@ const onCreate = async () => {
     aria-modal="true"
     aria-labelledby="folder-title"
     :aria-hidden="String(!open)"
+    @click.self="requestClose"
   >
     <div class="folder-modal__content" role="document" tabindex="-1">
       <header class="folder-modal__header">

@@ -23,7 +23,9 @@ const props = defineProps({
 const emit = defineEmits(["close", "imported"]);
 
 const { settings, saveSettings } = useSettings();
-const { rescheduleAllReminders } = useReminders();
+const { reminders, rescheduleAllReminders, cancelAllReminders } = useReminders();
+
+const reminderCount = computed(() => Object.keys(reminders).length);
 const {
   busy: archiveBusy,
   status: archiveStatus,
@@ -190,9 +192,13 @@ const onImport = async () => {
 
 // Draft state — only committed to the store on "Apply Changes".
 const draftAutosave = ref(true);
+const draftSyntaxHighlight = ref(true);
 const draftUrgency = ref("default");
+const draftNotificationsEnabled = ref(true);
 const draftTheme = ref("dark");
 const draftAutoSyncMinutes = ref(0);
+const draftSyncBeforeClose = ref(false);
+const draftBackgroundSyncAndroid = ref(false);
 const draftTitledFilenames = ref(false);
 // Vault-scoped, so it's read from the vault rather than the settings store —
 // and can change under us when a sync brings another device's newer choice.
@@ -200,9 +206,13 @@ const savedTitledFilenames = ref(false);
 
 const syncDraftFromSaved = () => {
   draftAutosave.value = settings.autosave;
+  draftSyntaxHighlight.value = settings.syntaxHighlight !== false;
   draftUrgency.value = settings.urgency;
+  draftNotificationsEnabled.value = settings.notificationsEnabled !== false;
   draftTheme.value = settings.theme;
   draftAutoSyncMinutes.value = settings.autoSyncMinutes;
+  draftSyncBeforeClose.value = settings.syncBeforeClose === true;
+  draftBackgroundSyncAndroid.value = settings.backgroundSyncAndroid === true;
 };
 
 const loadVaultSettings = async () => {
@@ -233,17 +243,31 @@ const closeSettings = async () => {
 
 const applyChanges = async () => {
   const previousUrgency = settings.urgency;
+  const notificationsToggled =
+    settings.notificationsEnabled !== draftNotificationsEnabled.value;
   const filenameStyleChanged =
     savedTitledFilenames.value !== draftTitledFilenames.value;
 
   await saveSettings({
     autosave: draftAutosave.value,
+    syntaxHighlight: draftSyntaxHighlight.value,
     urgency: draftUrgency.value,
+    notificationsEnabled: draftNotificationsEnabled.value,
     theme: draftTheme.value,
     autoSyncMinutes: draftAutoSyncMinutes.value,
+    syncBeforeClose: draftSyncBeforeClose.value,
+    backgroundSyncAndroid: draftBackgroundSyncAndroid.value,
   });
 
-  if (androidOnly && previousUrgency !== draftUrgency.value) {
+  // Flipping the kill switch either cancels every scheduled notification or
+  // reschedules them all (scheduling itself now respects the setting).
+  if (notificationsToggled) {
+    if (draftNotificationsEnabled.value) {
+      await rescheduleAllReminders();
+    } else {
+      await cancelAllReminders();
+    }
+  } else if (androidOnly && previousUrgency !== draftUrgency.value) {
     await ensureReminderChannel(draftUrgency.value);
     await rescheduleAllReminders();
   }
@@ -335,6 +359,7 @@ onBeforeUnmount(() => {
     aria-modal="true"
     aria-labelledby="settings-title"
     :aria-hidden="String(!open)"
+    @click.self="closeSettings"
   >
     <div class="settings-modal__content" role="document" tabindex="-1">
       <aside
@@ -408,6 +433,19 @@ onBeforeUnmount(() => {
                 <span class="slider"></span>
               </label>
             </li>
+            <li class="settings-toggle">
+              <span>
+                <strong>Markdown syntax highlighting</strong>
+                <small>
+                  Style headings, lists, links and emphasis as you type. Turn
+                  off to edit plain, unstyled text.
+                </small>
+              </span>
+              <label class="switch">
+                <input type="checkbox" v-model="draftSyntaxHighlight" />
+                <span class="slider"></span>
+              </label>
+            </li>
           </ul>
 
           <!-- Notifications -->
@@ -415,9 +453,28 @@ onBeforeUnmount(() => {
             v-show="activeCategory === 'notifications'"
             class="settings-toggle-list"
           >
+            <li class="settings-status">
+              {{ reminderCount }} reminder{{ reminderCount === 1 ? "" : "s" }}
+              currently set up.
+            </li>
+
+            <li class="settings-toggle">
+              <span>
+                <strong>Reminder notifications</strong>
+                <small>
+                  Turn off to silence all reminders on this device. Your
+                  reminders are kept and fire again when you turn this back on.
+                </small>
+              </span>
+              <label class="switch">
+                <input type="checkbox" v-model="draftNotificationsEnabled" />
+                <span class="slider"></span>
+              </label>
+            </li>
+
             <li
               class="settings-toggle settings-toggle--stack"
-              :class="{ 'is-disabled': !androidOnly }"
+              :class="{ 'is-disabled': !androidOnly || !draftNotificationsEnabled }"
             >
               <span>
                 <strong>Notification urgency</strong>
@@ -429,7 +486,7 @@ onBeforeUnmount(() => {
               <select
                 class="settings-select"
                 v-model="draftUrgency"
-                :disabled="!androidOnly"
+                :disabled="!androidOnly || !draftNotificationsEnabled"
               >
                 <option
                   v-for="level in URGENCY_LEVELS"
@@ -620,6 +677,50 @@ onBeforeUnmount(() => {
                   {{ option.label }}
                 </option>
               </select>
+            </li>
+
+            <li class="settings-toggle" :class="{ 'is-disabled': androidOnly }">
+              <span>
+                <strong>Finish syncing before closing</strong>
+                <small v-if="androidOnly">
+                  Desktop only — Android can dismiss the app instantly, so it
+                  can't hold the window open to finish a sync.
+                </small>
+                <small v-else>
+                  If you close the app mid-sync, keep it open and show a prompt
+                  until the sync finishes, instead of quitting right away.
+                </small>
+              </span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  v-model="draftSyncBeforeClose"
+                  :disabled="androidOnly"
+                />
+                <span class="slider"></span>
+              </label>
+            </li>
+
+            <li class="settings-toggle" :class="{ 'is-disabled': !androidOnly }">
+              <span>
+                <strong>Background sync (Android)</strong>
+                <small v-if="androidOnly">
+                  Runs each sync in a short-lived foreground service with a
+                  silent notification, so a sync can finish even if you swipe
+                  the app away mid-sync. Nothing runs while idle.
+                </small>
+                <small v-else>
+                  Android only — desktop keeps running syncs in the app itself.
+                </small>
+              </span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  v-model="draftBackgroundSyncAndroid"
+                  :disabled="!androidOnly"
+                />
+                <span class="slider"></span>
+              </label>
             </li>
 
             <li class="settings-toggle settings-toggle--stack">

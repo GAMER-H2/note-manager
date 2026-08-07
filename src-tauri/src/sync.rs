@@ -711,6 +711,11 @@ fn build_remote_with(
 #[tauri::command]
 pub async fn sync_now(app: tauri::AppHandle) -> Result<SyncReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Held for the whole sync; dropped on success, on `?`, and on panic.
+        // On Android with the opt-in on, this keeps the process alive (via a
+        // silent foreground service) long enough to finish after a swipe-away.
+        let _fgs = crate::sync_service::SyncServiceGuard::start(&app);
+
         let cfg = config::sync_config(&app).ok_or("Sync isn't set up yet.")?;
         let remote = build_remote(&app, &cfg)?;
         run_sync(&app, remote.as_ref())

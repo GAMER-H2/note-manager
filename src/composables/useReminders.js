@@ -122,30 +122,13 @@ const scheduleReminderNotification = async (
 ) => {
   if (!note?.id) return null;
 
-  const granted = await getPermission({ prompt: promptForPermission });
-  if (!granted) {
-    if (promptForPermission) {
-      throw new Error("Notification permission was not granted");
-    }
-    return null;
-  }
-
-  // Make sure the channel for the chosen urgency exists so Android doesn't
-  // silently drop the notification. Falls back to the global default urgency
-  // for reminders saved before per-reminder urgency existed.
+  // Falls back to the global default urgency for reminders saved before
+  // per-reminder urgency existed.
   const { settings } = useSettings();
   const existing = reminders[note.id];
   const urgency = cfg.urgency ?? existing?.urgency ?? settings.urgency;
   const bodyMode = cfg.bodyMode ?? existing?.bodyMode ?? "full";
-  const channelId = await ensureReminderChannel(urgency);
   const id = cfg.notificationId ?? existing?.notificationId ?? hashId(note.id);
-
-  // Clear any previously scheduled notification for this note.
-  try {
-    await cancel([id]);
-  } catch (e) {
-    console.warn("cancel before reschedule failed (may be none):", e);
-  }
 
   const nextCfg = {
     enabled: true,
@@ -155,6 +138,42 @@ const scheduleReminderNotification = async (
     urgency,
     bodyMode,
   };
+
+  // Notifications turned off on this device: remember the reminder config (so it
+  // fires again once re-enabled) but schedule nothing, and clear anything that
+  // was already scheduled. This runs before the permission prompt on purpose —
+  // a disabled kill switch shouldn't ask for notification permission.
+  if (settings.notificationsEnabled === false) {
+    try {
+      await cancel([id]);
+    } catch (e) {
+      console.warn("cancel while notifications off failed (may be none):", e);
+    }
+    reminders[note.id] = nextCfg;
+    if (persistResult) {
+      await persist();
+    }
+    return nextCfg;
+  }
+
+  const granted = await getPermission({ prompt: promptForPermission });
+  if (!granted) {
+    if (promptForPermission) {
+      throw new Error("Notification permission was not granted");
+    }
+    return null;
+  }
+
+  // Make sure the channel for the chosen urgency exists so Android doesn't
+  // silently drop the notification.
+  const channelId = await ensureReminderChannel(urgency);
+
+  // Clear any previously scheduled notification for this note.
+  try {
+    await cancel([id]);
+  } catch (e) {
+    console.warn("cancel before reschedule failed (may be none):", e);
+  }
 
   let title;
   let body;
@@ -311,6 +330,21 @@ export function useReminders() {
     await persist();
   };
 
+  // Cancels every scheduled notification without touching the stored configs,
+  // so re-enabling notifications can reschedule them all. Used by the
+  // "turn off all notifications" settings toggle.
+  const cancelAllReminders = async () => {
+    const ids = Object.values(reminders)
+      .map((cfg) => cfg?.notificationId)
+      .filter((id) => id != null);
+    if (ids.length === 0) return;
+    try {
+      await cancel(ids);
+    } catch (e) {
+      console.warn("cancel all reminders failed:", e);
+    }
+  };
+
   return {
     reminders,
     loadReminders,
@@ -320,6 +354,7 @@ export function useReminders() {
     refreshReminder,
     rescheduleAllReminders,
     removeReminder,
+    cancelAllReminders,
     REPEAT_OPTIONS,
     BODY_MODES,
   };

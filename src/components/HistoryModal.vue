@@ -106,6 +106,7 @@ watch(
     aria-modal="true"
     aria-labelledby="history-title"
     :aria-hidden="String(!open)"
+    @click.self="requestClose"
   >
     <div class="history-modal__content" role="document" tabindex="-1">
       <header class="history-modal__header">

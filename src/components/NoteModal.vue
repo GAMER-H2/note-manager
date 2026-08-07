@@ -9,6 +9,7 @@ import { useReminders } from "../composables/useReminders.js";
 import { useSettings } from "../composables/useSettings.js";
 import { useFolders } from "../composables/useFolders.js";
 import { usePinned } from "../composables/usePinned.js";
+import { useMarkdownIO } from "../composables/useMarkdownIO.js";
 import { initVisualViewport } from "../composables/useVisualViewport.js";
 import { useOverlayHistory } from "../composables/useOverlayHistory.js";
 import { isAndroid } from "../lib/platform.js";
@@ -35,10 +36,14 @@ const { getReminder, refreshReminder } = useReminders();
 const { settings } = useSettings();
 const { realFolders } = useFolders();
 const { isPinned, togglePin } = usePinned();
+const { importMarkdown, exportMarkdown } = useMarkdownIO();
 
 const reminderOpen = ref(false);
 const historyOpen = ref(false);
-const mobileActionsOpen = ref(false);
+const actionsMenuOpen = ref(false);
+// Holds imported file text while the replace-or-append choice modal is open.
+const importChoiceOpen = ref(false);
+const pendingImportText = ref("");
 const hasReminder = computed(() =>
   props.note ? !!getReminder(props.note.id) : false,
 );
@@ -58,11 +63,9 @@ const status = ref("Saved");
 const lastSaved = ref("");
 let cleanupViewport = () => {};
 
-const mobileMql = window.matchMedia("(max-width: 720px)");
-const isMobile = ref(mobileMql.matches);
-
 const open = computed(() => !!props.note);
 const autosaveEnabled = computed(() => settings.autosave !== false);
+const syntaxHighlight = computed(() => settings.syntaxHighlight !== false);
 const dirty = computed(() => draft.value !== lastSaved.value);
 const title = computed(() => firstLineTitle(draft.value));
 // Real filename off the note's path rather than a reconstructed `<id>.md`,
@@ -100,10 +103,10 @@ const { requestClose: requestHistoryClose } = useOverlayHistory(
   () => open.value,
   closeModal,
 );
-const { requestClose: requestCloseMobileActions } = useOverlayHistory(
-  () => open.value && isMobile.value && mobileActionsOpen.value,
+const { requestClose: requestCloseActionsMenu } = useOverlayHistory(
+  () => open.value && actionsMenuOpen.value,
   () => {
-    mobileActionsOpen.value = false;
+    actionsMenuOpen.value = false;
   },
 );
 
@@ -166,8 +169,8 @@ const onInput = async () => {
 
 const requestClose = async () => {
   debouncedSave.cancel?.();
-  if (mobileActionsOpen.value) {
-    await requestCloseMobileActions();
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
     await nextTick();
   }
   await persistNow({ syncReminder: true });
@@ -176,8 +179,8 @@ const requestClose = async () => {
 
 // Save the latest text first so the reminder configuration uses current content.
 const openReminder = async () => {
-  if (mobileActionsOpen.value) {
-    await requestCloseMobileActions();
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
     await nextTick();
   }
   debouncedSave.cancel?.();
@@ -188,8 +191,8 @@ const openReminder = async () => {
 // Persist before opening so the version you're looking at in the diff is the
 // version on disk — otherwise unsaved edits read as "no changes since".
 const openHistory = async () => {
-  if (mobileActionsOpen.value) {
-    await requestCloseMobileActions();
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
     await nextTick();
   }
   debouncedSave.cancel?.();
@@ -206,18 +209,81 @@ const onRestored = (content) => {
   status.value = "Restored";
 };
 
-const openMobileActions = () => {
-  if (!isMobile.value) return;
-  if (mobileActionsOpen.value) {
-    requestCloseMobileActions();
+const openActionsMenu = () => {
+  if (actionsMenuOpen.value) {
+    requestCloseActionsMenu();
     return;
   }
-  mobileActionsOpen.value = true;
+  actionsMenuOpen.value = true;
+};
+
+// Shared prologue for the menu items: close the dropdown first (so its history
+// entry is popped and it doesn't linger behind the dialog we're about to open).
+const closeActionsMenu = async () => {
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
+    await nextTick();
+  }
+};
+
+// Import: pick a markdown file, then either replace the note or drop the
+// imported text below what's already there. An empty note skips the prompt and
+// goes straight to replace — there's nothing to preserve.
+const onImport = async () => {
+  await closeActionsMenu();
+  let text;
+  try {
+    text = await importMarkdown();
+  } catch (err) {
+    console.error("Failed to import markdown:", err);
+    status.value = "Import failed";
+    return;
+  }
+  if (text == null) return;
+
+  if (draft.value.trim() === "") {
+    applyImport(text, "replace");
+    return;
+  }
+  pendingImportText.value = text;
+  importChoiceOpen.value = true;
+};
+
+const applyImport = async (text, mode) => {
+  draft.value =
+    mode === "append" ? `${draft.value.replace(/\s+$/, "")}\n\n${text}` : text;
+  status.value = "Imported";
+  await nextTick();
+  syncPreviewScroll();
+  debouncedSave.cancel?.();
+  await persistNow({ syncReminder: true });
+};
+
+const chooseImportMode = async (mode) => {
+  const text = pendingImportText.value;
+  importChoiceOpen.value = false;
+  pendingImportText.value = "";
+  if (mode === "cancel") return;
+  await applyImport(text, mode);
+};
+
+// Export: save the note's current text to a markdown/plain-text file of the
+// user's choosing. Persist first so the draft can't be mid-save-failure.
+const onExport = async () => {
+  await closeActionsMenu();
+  debouncedSave.cancel?.();
+  await persistNow({ syncReminder: true });
+  try {
+    await exportMarkdown(title.value, draft.value);
+  } catch (err) {
+    console.error("Failed to export markdown:", err);
+    status.value = "Export failed";
+  }
 };
 
 const onFolderChange = async (folder) => {
-  if (mobileActionsOpen.value) {
-    await requestCloseMobileActions();
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
     await nextTick();
   }
   if (!props.note || folder === noteFolder.value) return;
@@ -229,8 +295,8 @@ const onFolderChange = async (folder) => {
 };
 
 const onTogglePin = async () => {
-  if (mobileActionsOpen.value) {
-    await requestCloseMobileActions();
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
     await nextTick();
   }
   if (!props.note) return;
@@ -262,8 +328,8 @@ const onPreviewClick = async (event) => {
   const noteTitle = (slash === -1 ? linkPath : linkPath.slice(slash + 1)).trim();
   if (!noteTitle) return;
 
-  if (mobileActionsOpen.value) {
-    await requestCloseMobileActions();
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
     await nextTick();
   }
   debouncedSave.cancel?.();
@@ -280,8 +346,8 @@ const onPreviewClick = async (event) => {
 };
 
 const handleDelete = async () => {
-  if (mobileActionsOpen.value) {
-    await requestCloseMobileActions();
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
     await nextTick();
   }
   if (!props.note) return;
@@ -305,18 +371,15 @@ const onKeydown = (e) => {
   }
 
   if (e.key === "Escape") {
-    if (mobileActionsOpen.value) {
-      requestCloseMobileActions();
+    if (importChoiceOpen.value) {
+      chooseImportMode("cancel");
+      return;
+    }
+    if (actionsMenuOpen.value) {
+      requestCloseActionsMenu();
       return;
     }
     requestClose();
-  }
-};
-
-const onViewportChange = (e) => {
-  isMobile.value = e.matches;
-  if (!e.matches && mobileActionsOpen.value) {
-    requestCloseMobileActions();
   }
 };
 
@@ -372,7 +435,9 @@ watch(
     } else if (prev) {
       reminderOpen.value = false;
       historyOpen.value = false;
-      mobileActionsOpen.value = false;
+      actionsMenuOpen.value = false;
+      importChoiceOpen.value = false;
+      pendingImportText.value = "";
       debouncedSave.cancel?.();
       cleanupViewport();
       cleanupViewport = () => {};
@@ -383,24 +448,12 @@ watch(
   },
 );
 
-if (typeof mobileMql.addEventListener === "function") {
-  mobileMql.addEventListener("change", onViewportChange);
-} else if (typeof mobileMql.addListener === "function") {
-  mobileMql.addListener(onViewportChange);
-}
-
 onBeforeUnmount(() => {
   debouncedSave.cancel?.();
   cleanupViewport();
   document.documentElement.classList.remove("note-open");
   document.body.classList.remove("note-open");
   window.removeEventListener("keydown", onKeydown);
-
-  if (typeof mobileMql.removeEventListener === "function") {
-    mobileMql.removeEventListener("change", onViewportChange);
-  } else if (typeof mobileMql.removeListener === "function") {
-    mobileMql.removeListener(onViewportChange);
-  }
 });
 </script>
 
@@ -412,6 +465,7 @@ onBeforeUnmount(() => {
     aria-modal="true"
     aria-labelledby="note-editor-title"
     :aria-hidden="String(!open)"
+    @click.self="requestClose"
   >
     <div class="note-modal__content" role="document" tabindex="-1">
       <header class="note-modal__header">
@@ -420,75 +474,21 @@ onBeforeUnmount(() => {
           <p class="note-modal__subtitle">{{ subtitle }}</p>
         </div>
         <div class="note-modal__actions">
-          <template v-if="isMobile">
-            <button
-              type="button"
-              class="note-actions-button"
-              aria-label="Open note actions"
-              :aria-expanded="String(mobileActionsOpen)"
-              @click="openMobileActions"
-            >
-              ⋮
-            </button>
-          </template>
-          <template v-else>
-            <select
-              class="note-folder-select"
-              aria-label="Folder"
-              :value="noteFolder"
-              @change="onFolderChange($event.target.value)"
-            >
-              <option v-for="f in realFolders" :key="f" :value="f">{{ f }}</option>
-            </select>
-            <button
-              type="button"
-              class="note-pin-button"
-              :class="{ 'is-active': pinned }"
-              :aria-label="pinned ? 'Unpin note' : 'Pin note'"
-              @click="onTogglePin"
-            >
-              <span v-if="pinned" class="folder-icon folder-icon--pinned" aria-hidden="true"></span>
-              {{ pinned ? "Pinned" : "Pin" }}
-            </button>
-            <button
-              type="button"
-              class="note-reminder-button"
-              :class="{ 'is-active': hasReminder }"
-              :aria-label="hasReminder ? 'Edit reminder' : 'Add reminder'"
-              @click="openReminder"
-            >
-              {{ hasReminder ? "🔔 Reminder" : "Reminder" }}
-            </button>
-            <button
-              type="button"
-              class="note-history-button"
-              aria-label="Version history"
-              @click="openHistory"
-            >
-              History
-            </button>
-            <button
-              type="button"
-              class="note-delete-button"
-              aria-label="Delete note"
-              @click="handleDelete"
-            >
-              Delete
-            </button>
-            <button
-              type="button"
-              class="note-close-button"
-              aria-label="Close note"
-              @click="requestClose"
-            >
-              ×
-            </button>
-          </template>
+          <button
+            type="button"
+            class="note-actions-button"
+            aria-label="Open note actions"
+            :aria-expanded="String(actionsMenuOpen)"
+            @click="openActionsMenu"
+          >
+            ⋮
+          </button>
         </div>
       </header>
 
       <div class="note-modal__editor-shell">
         <div
+          v-if="syntaxHighlight"
           ref="preview"
           class="note-modal__preview"
           aria-hidden="true"
@@ -500,6 +500,7 @@ onBeforeUnmount(() => {
           ref="editor"
           v-model="draft"
           class="note-modal__editor"
+          :class="{ 'note-modal__editor--plain': !syntaxHighlight }"
           aria-label="Edit note (markdown)"
           placeholder="Start typing markdown…"
           spellcheck="true"
@@ -533,12 +534,12 @@ onBeforeUnmount(() => {
       </footer>
 
       <div
-        v-if="isMobile && mobileActionsOpen"
+        v-if="actionsMenuOpen"
         class="note-actions-menu__backdrop"
-        @click="requestCloseMobileActions"
+        @click="requestCloseActionsMenu"
       ></div>
       <section
-        v-if="isMobile && mobileActionsOpen"
+        v-if="actionsMenuOpen"
         class="note-actions-menu"
         role="dialog"
         aria-modal="true"
@@ -579,10 +580,66 @@ onBeforeUnmount(() => {
         </button>
         <button
           type="button"
+          class="note-actions-menu__item"
+          @click="onImport"
+        >
+          Import markdown
+        </button>
+        <button
+          type="button"
+          class="note-actions-menu__item"
+          @click="onExport"
+        >
+          Export markdown
+        </button>
+        <button
+          type="button"
           class="note-actions-menu__item note-actions-menu__item--danger"
           @click="handleDelete"
         >
           Delete
+        </button>
+      </section>
+
+      <div
+        v-if="importChoiceOpen"
+        class="import-choice__backdrop"
+        @click="chooseImportMode('cancel')"
+      ></div>
+      <section
+        v-if="importChoiceOpen"
+        class="import-choice"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import markdown"
+      >
+        <h3 class="import-choice__title">Import markdown</h3>
+        <p class="import-choice__text">
+          This note already has content. Replace it, or add the imported text
+          below what's there?
+        </p>
+        <div class="import-choice__actions">
+          <button
+            type="button"
+            class="import-choice__button"
+            @click="chooseImportMode('append')"
+          >
+            Add below
+          </button>
+          <button
+            type="button"
+            class="import-choice__button import-choice__button--primary"
+            @click="chooseImportMode('replace')"
+          >
+            Replace
+          </button>
+        </div>
+        <button
+          type="button"
+          class="import-choice__cancel"
+          @click="chooseImportMode('cancel')"
+        >
+          Cancel
         </button>
       </section>
     </div>

@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from "vue";
+import { useContextMenuTrigger } from "../composables/useContextMenuTrigger.js";
 
 const props = defineProps({
   node: { type: Object, required: true },
@@ -7,9 +8,15 @@ const props = defineProps({
   expandedPaths: { type: Object, required: true },
 });
 
-defineEmits(["select-folder", "toggle-expand"]);
+const emit = defineEmits(["select-folder", "toggle-expand", "context"]);
 
 const isExpanded = computed(() => props.expandedPaths.has(props.node.path));
+
+// App.vue builds the folder menu items; this just reports where and for which
+// folder the menu was summoned (right-click on desktop, long-press on mobile).
+const trigger = useContextMenuTrigger(({ x, y }) =>
+  emit("context", { path: props.node.path, x, y }),
+);
 </script>
 
 <template>
@@ -33,6 +40,11 @@ const isExpanded = computed(() => props.expandedPaths.has(props.node.path));
         :data-folder-id="node.path"
         :aria-current="String(node.path === selectedFolder)"
         @click="$emit('select-folder', node.path)"
+        @contextmenu="trigger.onContextMenu"
+        @touchstart="trigger.onTouchStart"
+        @touchmove="trigger.onTouchMove"
+        @touchend="trigger.onTouchEnd"
+        @touchcancel="trigger.onTouchCancel"
       >
         <span class="folder-icon folder-icon--folder" aria-hidden="true"></span>
         {{ node.name }}
@@ -48,6 +60,7 @@ const isExpanded = computed(() => props.expandedPaths.has(props.node.path));
         :expanded-paths="expandedPaths"
         @select-folder="$emit('select-folder', $event)"
         @toggle-expand="$emit('toggle-expand', $event)"
+        @context="$emit('context', $event)"
       />
     </div>
   </div>

@@ -8,7 +8,7 @@ const props = defineProps({
   selectedFolder: { type: String, default: "" },
 });
 
-defineEmits(["add-folder", "add-subfolder", "select-folder"]);
+defineEmits(["add-folder", "add-subfolder", "select-folder", "folder-context"]);
 
 // useFolders() is a safe module-singleton (unlike useNotes()), so the tree
 // structure/expand-state can be pulled directly rather than threaded through
@@ -50,6 +50,7 @@ const canAddSubfolder = computed(
         :expanded-paths="expandedPaths"
         @select-folder="$emit('select-folder', $event)"
         @toggle-expand="toggleExpanded"
+        @context="$emit('folder-context', $event)"
       />
     </nav>
     <div class="sidebar-footer">

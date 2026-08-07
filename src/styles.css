@@ -146,6 +146,65 @@ input,
     gap: 10px;
 }
 
+/* Group right header controls (sync + settings) */
+.header-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sync-button {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        opacity 120ms ease;
+}
+
+.sync-button:hover:not(:disabled) {
+    background: #23283a;
+    border-color: #37405a;
+}
+
+.sync-button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.sync-icon {
+    width: 18px;
+    height: 18px;
+    /* The asset is a solid black glyph; invert it to read on the dark theme. */
+    filter: invert(1);
+    opacity: 0.85;
+}
+
+[data-theme="light"] .sync-icon {
+    filter: none;
+    opacity: 0.7;
+}
+
+@keyframes sync-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.sync-button.is-syncing .sync-icon,
+.sync-icon.is-syncing {
+    animation: sync-spin 0.9s linear infinite;
+}
+
 .app-title {
     margin: 0;
     font-size: 18px;
@@ -445,6 +504,69 @@ input,
     -webkit-overflow-scrolling: touch;
 }
 
+/* Sort + view controls, boxless, sitting just above the notes */
+.notes-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 14px;
+    min-width: 0;
+}
+
+.notes-toolbar__sort {
+    position: relative;
+}
+
+.notes-toolbar__button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 10px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+        color 140ms ease,
+        background 140ms ease;
+}
+
+.notes-toolbar__button:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.notes-toolbar__icon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.notes-toolbar__caret {
+    font-size: 10px;
+    opacity: 0.75;
+}
+
+/* Reuses the mobile note-actions menu look, re-anchored under the sort button
+   instead of the note-modal header. */
+.notes-sort-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: auto;
+    min-width: 200px;
+}
+
+.notes-sort-menu__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+}
+
 .notes-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -453,8 +575,38 @@ input,
     min-width: 0;
 }
 
+/* List view: notes drop their card box and stack with a separator between each */
+.notes-list {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.notes-list .note-card {
+    min-height: 0;
+    gap: 6px;
+    padding: 14px 6px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+}
+
+.notes-list .note-card:last-child {
+    border-bottom: none;
+}
+
+.notes-list .note-card:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--border);
+    background: rgba(255, 255, 255, 0.02);
+}
+
 /* Empty state (shown when no notes) */
-.notes-grid:empty::before {
+.notes-grid:empty::before,
+.notes-list:empty::before {
     content: "No notes yet";
     display: block;
     color: var(--muted);
@@ -638,7 +790,7 @@ button:focus-visible,
     }
 
     .notes-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
     }
 }
@@ -690,7 +842,23 @@ button:focus-visible,
     border-color: var(--border);
 }
 
-[data-theme="light"] .notes-grid:empty::before {
+/* List view keeps its boxless look in the light theme too. */
+[data-theme="light"] .notes-list .note-card {
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+}
+
+[data-theme="light"] .notes-list .note-card:last-child {
+    border-bottom: none;
+}
+
+[data-theme="light"] .notes-list .note-card:hover {
+    background: rgba(2, 6, 23, 0.03);
+}
+
+[data-theme="light"] .notes-grid:empty::before,
+[data-theme="light"] .notes-list:empty::before {
     background: #f8f9fd;
     border-color: var(--border);
     color: #7783a1;
@@ -1506,6 +1674,12 @@ body.note-open {
     -webkit-overflow-scrolling: touch;
 }
 
+/* Highlighting off: no preview overlay behind, so the textarea shows its own
+   text rather than staying transparent for the overlay to paint over. */
+.note-modal__editor--plain {
+    color: var(--text);
+}
+
 .note-modal__editor::selection {
     background: rgba(79, 124, 255, 0.28);
 }
@@ -2230,4 +2404,266 @@ body.note-open {
 .settings-input:focus {
     outline: none;
     border-color: var(--primary);
+}
+
+/* Desktop right-click context menu (folders + note cards). Rendered once in
+   App.vue, positioned at the cursor via inline left/top. */
+.context-menu__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+}
+
+.context-menu {
+    position: fixed;
+    z-index: 201;
+    min-width: 200px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow:
+        0 18px 44px rgba(2, 4, 10, 0.46),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.context-menu__item {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 38px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.context-menu__item:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.context-menu__item--danger {
+    color: var(--danger);
+}
+
+.context-menu__item--disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.context-menu__item--disabled:hover {
+    background: transparent;
+    border-color: transparent;
+}
+
+[data-theme="light"] .context-menu__item:hover {
+    background: rgba(2, 6, 23, 0.05);
+    border-color: var(--border);
+}
+
+/* "Replace or add below" prompt shown when importing markdown into a note that
+   already has content. Sits inside .note-modal__content, over the editor. */
+.import-choice__backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    background: rgba(6, 7, 10, 0.4);
+}
+
+.import-choice {
+    position: absolute;
+    z-index: 7;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(400px, calc(100% - 32px));
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: 0 24px 60px rgba(2, 4, 10, 0.55);
+}
+
+.import-choice__title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--text);
+}
+
+.import-choice__text {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
+.import-choice__actions {
+    display: flex;
+    gap: 10px;
+}
+
+.import-choice__button {
+    appearance: none;
+    flex: 1;
+    min-height: 40px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text);
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+    transition:
+        background 140ms ease,
+        border-color 140ms ease;
+}
+
+.import-choice__button:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: #37405a;
+}
+
+.import-choice__button--primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+
+.import-choice__button--primary:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+}
+
+.import-choice__cancel {
+    appearance: none;
+    align-self: center;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.import-choice__cancel:hover {
+    color: var(--text);
+}
+
+[data-theme="light"] .import-choice__button:hover {
+    background: rgba(2, 6, 23, 0.04);
+    border-color: var(--border);
+}
+
+/* Folder deletion prompt: two stacked choice buttons (move vs delete). */
+.folder-delete__lead {
+    margin: 0 0 4px 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
+.folder-delete__options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.folder-delete__option {
+    appearance: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+        background 140ms ease,
+        border-color 140ms ease;
+}
+
+.folder-delete__option:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: #37405a;
+}
+
+.folder-delete__option--danger:hover {
+    background: rgba(255, 80, 90, 0.12);
+    border-color: rgba(255, 80, 90, 0.4);
+}
+
+.folder-delete__option-title {
+    font-weight: 650;
+    font-size: 14px;
+}
+
+.folder-delete__option--danger .folder-delete__option-title {
+    color: var(--danger);
+}
+
+.folder-delete__option-note {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--muted);
+}
+
+[data-theme="light"] .folder-delete__option:hover {
+    background: rgba(2, 6, 23, 0.04);
+    border-color: var(--border);
+}
+
+/* "Finishing sync…" prompt shown while holding the window open on close. */
+.close-sync {
+    align-items: center;
+    gap: 14px;
+    padding: 24px 22px 18px;
+    text-align: center;
+}
+
+.close-sync__icon {
+    width: 34px;
+    height: 34px;
+}
+
+.close-sync__title {
+    margin: 0 0 4px 0;
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--text);
+}
+
+.close-sync__text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
+.close-sync__footer {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 6px;
 }

@@ -73,6 +73,25 @@ export function useFolders() {
     return created;
   };
 
+  // Deletes a folder (and its subfolders). `mode` is "delete" (remove the notes
+  // too) or "move" (flatten them into General first). Returns the ids of the
+  // notes that were under the folder so the caller can reconcile pins/reminders.
+  const deleteFolder = async (path, mode) => {
+    const affectedIds = await invoke("delete_folder", {
+      req: { folder: path, mode },
+    });
+    await loadFolders();
+    // Selection may now point at a folder that no longer exists.
+    if (
+      selectedFolder.value === path ||
+      selectedFolder.value.startsWith(`${path}/`)
+    ) {
+      selectedFolder.value = GENERAL_FOLDER;
+    }
+    expandedPaths.delete(path);
+    return Array.isArray(affectedIds) ? affectedIds : [];
+  };
+
   const selectFolder = (name) => {
     selectedFolder.value = name;
   };
@@ -95,6 +114,7 @@ export function useFolders() {
     selectedFolder,
     loadFolders,
     createFolder,
+    deleteFolder,
     selectFolder,
     toggleExpanded,
     defaultNoteFolder,

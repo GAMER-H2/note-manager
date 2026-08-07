@@ -9,12 +9,26 @@ export const THEMES = [
 
 const DEFAULTS = {
   autosave: true, // General
+  syntaxHighlight: true, // General — live markdown highlighting in the editor
   urgency: "default", // Notifications (Android)
+  notificationsEnabled: true, // Notifications — local kill switch for reminders
   theme: "dark", // Appearance
   // Minutes between automatic syncs; 0 keeps sync manual. Lives here rather
   // than in the sync config because it's a per-device choice — a desktop can
   // afford a 5-minute poll that a phone on battery shouldn't.
   autoSyncMinutes: 0, // Sync
+  // When closing the app mid-sync, hold the window open until the sync finishes
+  // (with a prompt) rather than quitting immediately. Off by default.
+  syncBeforeClose: false, // Sync
+  // Android only: run each sync inside a short-lived foreground service (with a
+  // silent notification) so a sync can finish after the app is swiped away.
+  // Off by default.
+  backgroundSyncAndroid: false, // Sync
+
+  // How the current folder's notes are ordered/displayed. Per-device view
+  // preferences, so they belong here rather than in the vault metadata.
+  noteSort: "created-desc", // one of NOTE_SORT_OPTIONS' values
+  noteView: "grid", // "grid" | "list"
 };
 // Note: the titled-filenames toggle deliberately lives outside this store. It
 // describes the vault rather than the device, so it's kept in the vault's

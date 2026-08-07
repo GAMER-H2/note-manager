@@ -5,10 +5,33 @@ mod history;
 mod notes;
 mod secrets;
 mod sync;
+mod sync_service;
 mod webdav;
 
 use std::{fs, path::PathBuf, sync::Mutex};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
+
+/// Reveals an absolute path in the OS file manager, selecting the item within
+/// its containing directory. Used by the desktop right-click "show in file
+/// browser" on a note — we hand it the note's own file path.
+#[tauri::command]
+fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| format!("Failed to reveal path: {e}"))
+}
+
+/// Opens a folder's directory in the OS file manager. The frontend only knows a
+/// folder by its vault-relative path, so we resolve it to an absolute directory
+/// here (the same resolution `move_note`/`create_note` use).
+#[tauri::command]
+fn open_folder(app: tauri::AppHandle, folder: String) -> Result<(), String> {
+    let dir = notes::folder_dir(&app, &folder)?;
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("Failed to open folder: {e}"))
+}
 
 fn reminders_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let base = app
@@ -176,6 +199,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(sync_service::init())
         .invoke_handler(tauri::generate_handler![
             notes::create_note,
             notes::update_note,
@@ -184,6 +208,7 @@ pub fn run() {
             notes::move_note,
             notes::list_folders,
             notes::create_folder,
+            notes::delete_folder,
             notes::restyle_note_filenames,
             config::get_vault_root,
             config::set_vault_root,
@@ -210,7 +235,9 @@ pub fn run() {
             get_settings,
             set_settings,
             get_pinned,
-            set_pinned
+            set_pinned,
+            reveal_path,
+            open_folder
         ])
         .setup(|app| {
             let handle = app.handle();

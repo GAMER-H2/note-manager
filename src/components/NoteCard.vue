@@ -10,6 +10,8 @@ defineEmits(["open"]);
 
 const title = computed(() => firstLineTitle(props.note.content));
 const preview = computed(() => previewText(props.note.content));
+// The right-click / long-press menu is handled by a single delegated trigger on
+// the main panel in App.vue (which reads this card's data-note-id).
 </script>
 
 <template>

@@ -279,8 +279,70 @@ export const renderMarkdownPreviewLines = (markdown) => {
   return rendered;
 };
 
+// Reduces a note title to something safe as a default download filename:
+// strips path separators and cross-platform reserved characters, collapses
+// whitespace, and caps the length. Loosely mirrors the Rust
+// `sanitize_title_for_filename` — it only seeds the save dialog, so it need not
+// match byte-for-byte.
+export const sanitizeFileStem = (title) =>
+  String(title ?? "")
+    .replace(/[/\\:*?"<>|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60)
+    .trim();
+
 // Short preview of the note body for the card.
 export const previewText = (markdown) => {
   const text = normalizeMarkdown(markdown).split("\n").slice(0, 6).join("\n").trim();
   return text ? text.slice(0, 240) : "Click to edit…";
+};
+
+// The sort choices offered above the note grid, in the order they appear in the
+// dropdown. `created-desc` is the default and matches the backend's own
+// newest-first ordering.
+export const NOTE_SORT_OPTIONS = [
+  { value: "az", label: "A–Z" },
+  { value: "za", label: "Z–A" },
+  { value: "created-desc", label: "Newest created" },
+  { value: "edited-desc", label: "Last edited" },
+  { value: "created-asc", label: "Oldest created" },
+];
+
+export const DEFAULT_NOTE_SORT = "created-desc";
+
+// Creation time (ms since the epoch) is encoded in a note id shaped like
+// `note_<ms>_<device>`. Notes predating that scheme (or any unparsable id) fall
+// back to their last-modified time so they still sort sensibly.
+const noteCreatedAt = (note) => {
+  const ms = Number(String(note?.id ?? "").split("_")[1]);
+  return Number.isFinite(ms) && ms > 0 ? ms : (note?.mtime ?? 0);
+};
+
+// Case/accent-insensitive, numerically-aware title comparison ("Note 2" before
+// "Note 10") so A–Z / Z–A read the way a person would expect.
+const titleCollator = new Intl.Collator(undefined, {
+  sensitivity: "base",
+  numeric: true,
+});
+
+// Returns a new array; never mutates the caller's list.
+export const sortNotes = (notes, mode) => {
+  const sorted = [...notes];
+  const byTitle = (a, b) =>
+    titleCollator.compare(firstLineTitle(a.content), firstLineTitle(b.content));
+
+  switch (mode) {
+    case "az":
+      return sorted.sort(byTitle);
+    case "za":
+      return sorted.sort((a, b) => byTitle(b, a));
+    case "created-asc":
+      return sorted.sort((a, b) => noteCreatedAt(a) - noteCreatedAt(b));
+    case "edited-desc":
+      return sorted.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+    case "created-desc":
+    default:
+      return sorted.sort((a, b) => noteCreatedAt(b) - noteCreatedAt(a));
+  }
 };

@@ -41,6 +41,14 @@ pub struct MoveNoteRequest {
     pub folder: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteFolderRequest {
+    pub folder: String,
+    /// "delete" removes the notes (and their history) along with the folder;
+    /// "move" relocates every note into General before removing the folder.
+    pub mode: String,
+}
+
 /// Hex SHA-256 of note content. Shared by the note list, history, and sync so
 /// they all agree on what "unchanged" means.
 pub fn content_hash(content: &str) -> String {
@@ -706,6 +714,66 @@ pub fn list_folders(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     );
 
     Ok(paths)
+}
+
+/// Deletes a folder (and its subfolders). The notes it contains are either
+/// deleted outright or flattened into General first, depending on `req.mode`.
+/// Returns the ids of the notes that lived under the folder, so the frontend
+/// can reconcile its pin/reminder stores.
+///
+/// Subfolders are never preserved: in "move" mode the notes are unpacked into
+/// General and the (now note-free) directory tree is removed wholesale.
+#[tauri::command]
+pub fn delete_folder(app: tauri::AppHandle, req: DeleteFolderRequest) -> Result<Vec<String>, String> {
+    let folder = sanitize_folder_path(&req.folder);
+    if folder == DEFAULT_FOLDER {
+        return Err("The General folder can't be deleted.".to_string());
+    }
+
+    let root = notes_dir(&app)?;
+    let target = folder_dir(&app, &folder)?;
+    if !target.is_dir() {
+        return Err(format!("Folder '{folder}' not found"));
+    }
+
+    // Enumerate the notes under the folder subtree up front, both to report them
+    // back and (in move mode) to relocate them.
+    let mut notes = Vec::new();
+    collect_notes(&root, &target, &mut notes)?;
+    let ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
+
+    match req.mode.as_str() {
+        "move" => {
+            let general = folder_dir(&app, DEFAULT_FOLDER)?;
+            fs::create_dir_all(&general)
+                .map_err(|e| format!("Failed to ensure General folder: {e}"))?;
+            for note in &notes {
+                let src = PathBuf::from(&note.path);
+                let Some(name) = src.file_name() else { continue };
+                let mut dest = general.join(name);
+                // Note ids are unique, so a clash here would only be a note that
+                // is somehow already in General — never overwrite it.
+                if dest.exists() && dest != src {
+                    dest = general.join(format!("{}.md", note.id));
+                }
+                fs::rename(&src, &dest)
+                    .map_err(|e| format!("Failed to move note into General: {e}"))?;
+            }
+        }
+        "delete" => {
+            for id in &ids {
+                // Best-effort: the note files go with the directory below either
+                // way; a lingering history entry shouldn't abort the delete.
+                if let Err(e) = crate::history::forget(&app, id) {
+                    eprintln!("Failed to forget history for {id}: {e}");
+                }
+            }
+        }
+        other => return Err(format!("Unknown delete mode '{other}'")),
+    }
+
+    fs::remove_dir_all(&target).map_err(|e| format!("Failed to remove folder: {e}"))?;
+    Ok(ids)
 }
 
 #[tauri::command]

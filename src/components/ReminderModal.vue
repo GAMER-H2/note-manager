@@ -132,6 +132,7 @@ const onRemove = async () => {
     aria-modal="true"
     aria-labelledby="reminder-title"
     :aria-hidden="String(!open)"
+    @click.self="requestClose"
   >
     <div class="reminder-modal__content" role="document" tabindex="-1">
       <header class="reminder-modal__header">
