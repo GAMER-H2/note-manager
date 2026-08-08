@@ -1,11 +1,18 @@
 <script setup>
 import { computed } from "vue";
-import { useFolders, PINNED_FOLDER, GENERAL_FOLDER } from "../composables/useFolders.js";
+import {
+  useFolders,
+  PINNED_FOLDER,
+  GENERAL_FOLDER,
+  ARCHIVE_FOLDER,
+} from "../composables/useFolders.js";
 import FolderTreeItem from "./FolderTreeItem.vue";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   selectedFolder: { type: String, default: "" },
+  // Number of archived notes — the Archive entry is greyed out when zero.
+  archivedCount: { type: Number, default: 0 },
 });
 
 defineEmits(["add-folder", "add-subfolder", "select-folder", "folder-context"]);
@@ -53,6 +60,20 @@ const canAddSubfolder = computed(
         @context="$emit('folder-context', $event)"
       />
     </nav>
+
+    <button
+      class="folder-button folder-button--archive"
+      type="button"
+      data-folder-id="Archive"
+      :disabled="archivedCount === 0"
+      :aria-current="String(selectedFolder === ARCHIVE_FOLDER)"
+      @click="$emit('select-folder', ARCHIVE_FOLDER)"
+    >
+      <span class="folder-icon folder-icon--folder" aria-hidden="true"></span>
+      Archive
+      <span v-if="archivedCount > 0" class="folder-count">{{ archivedCount }}</span>
+    </button>
+
     <div class="sidebar-footer">
       <button
         class="add-folder-button"

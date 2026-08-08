@@ -205,12 +205,29 @@ input,
     animation: sync-spin 0.9s linear infinite;
 }
 
+.app-title-block {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+}
+
 .app-title {
     margin: 0;
     font-size: 18px;
     font-weight: 600;
     letter-spacing: 0.2px;
+    line-height: 1.15;
     color: var(--text);
+}
+
+.app-subtitle {
+    font-size: 12px;
+    line-height: 1.1;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .settings-button {
@@ -315,6 +332,9 @@ input,
     gap: 10px;
     overflow: auto;
     padding-right: 4px; /* space for scrollbar */
+    /* Fill the sidebar so the Archive entry + footer sit at the bottom. */
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 /* Custom scrollbar (WebKit-based) */
@@ -2666,4 +2686,89 @@ body.note-open {
     gap: 10px;
     justify-content: center;
     margin-top: 6px;
+}
+
+/* Archive sidebar entry + disabled/greyed folder buttons */
+.folder-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.folder-button:disabled:hover {
+    transform: none;
+    background: var(--surface-2);
+    border-color: var(--border);
+    box-shadow: none;
+}
+
+.folder-count {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+/* Clear-archive toolbar button (pushed to the right, danger-tinted) */
+.notes-toolbar__button--end {
+    margin-left: auto;
+}
+
+.notes-toolbar__button--danger {
+    color: var(--danger);
+}
+
+.notes-toolbar__button--danger:hover {
+    color: var(--danger);
+    background: rgba(255, 80, 90, 0.12);
+}
+
+.notes-toolbar__button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.notes-toolbar__button:disabled:hover {
+    background: transparent;
+}
+
+/* Archived-note read-only banner + restore button */
+.note-modal__archived-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    background: rgba(255, 200, 87, 0.1);
+    border-bottom: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.note-modal__restore {
+    appearance: none;
+    height: 30px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 200, 87, 0.4);
+    background: rgba(255, 200, 87, 0.16);
+    color: var(--accent);
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+    transition: background 140ms ease;
+}
+
+.note-modal__restore:hover {
+    background: rgba(255, 200, 87, 0.24);
+}
+
+.settings-primary--danger {
+    background: var(--danger);
+    border-color: var(--danger);
+}
+
+.settings-primary--danger:hover {
+    background: #e85a5a;
+    border-color: #e85a5a;
 }

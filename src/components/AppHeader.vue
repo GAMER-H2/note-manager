@@ -7,6 +7,9 @@ defineProps({
   // is configured at all (otherwise there's nothing to sync).
   syncing: { type: Boolean, default: false },
   syncEnabled: { type: Boolean, default: false },
+  // Full path of the folder being viewed (e.g. "Work/Projects", "Pinned"),
+  // shown as a subheading under the app title.
+  currentFolder: { type: String, default: "" },
 });
 
 defineEmits(["toggle-sidebar", "open-settings", "sync"]);
@@ -26,7 +29,12 @@ defineEmits(["toggle-sidebar", "open-settings", "sync"]);
         <span class="bar"></span>
         <span class="bar"></span>
       </button>
-      <h1 class="app-title">Note Manager</h1>
+      <div class="app-title-block">
+        <h1 class="app-title">Note Manager</h1>
+        <span v-if="currentFolder" class="app-subtitle" :title="currentFolder">
+          {{ currentFolder }}
+        </span>
+      </div>
     </div>
     <div class="header-right">
       <button

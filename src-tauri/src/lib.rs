@@ -125,6 +125,37 @@ fn set_pinned(app: tauri::AppHandle, data: String) -> Result<(), String> {
     Ok(())
 }
 
+fn archive_origins_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    Ok(base.join("archive_origins.json"))
+}
+
+/// Raw JSON map of noteId -> the folder a note lived in before it was archived,
+/// so restoring can put it back. "{}" when nothing has been archived yet.
+#[tauri::command]
+fn get_archive_origins(app: tauri::AppHandle) -> Result<String, String> {
+    let path = archive_origins_path(&app)?;
+    match fs::read_to_string(&path) {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("{}".to_string()),
+        Err(e) => Err(format!("Failed to read archive origins: {e}")),
+    }
+}
+
+/// Persists the archive-origins map as-is. `data` is the JSON from the frontend.
+#[tauri::command]
+fn set_archive_origins(app: tauri::AppHandle, data: String) -> Result<(), String> {
+    let path = archive_origins_path(&app)?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("Failed to create data dir: {e}"))?;
+    }
+    fs::write(&path, data).map_err(|e| format!("Failed to write archive origins: {e}"))?;
+    Ok(())
+}
+
 /// Raw JSON of the pinned/reminder stores, for the archive exporter.
 pub(crate) fn read_pinned_raw(app: &tauri::AppHandle) -> Result<String, String> {
     get_pinned(app.clone())
@@ -236,6 +267,8 @@ pub fn run() {
             set_settings,
             get_pinned,
             set_pinned,
+            get_archive_origins,
+            set_archive_origins,
             reveal_path,
             open_folder
         ])

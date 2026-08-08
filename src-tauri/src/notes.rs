@@ -788,8 +788,10 @@ pub fn create_folder(
         None => sanitized_name,
     };
 
-    if full_path.split('/').any(|seg| seg.eq_ignore_ascii_case("pinned")) {
-        return Err("\"Pinned\" is a reserved name.".to_string());
+    if full_path.split('/').any(|seg| {
+        seg.eq_ignore_ascii_case("pinned") || seg.eq_ignore_ascii_case("archive")
+    }) {
+        return Err("\"Pinned\" and \"Archive\" are reserved names.".to_string());
     }
 
     let dir = notes_dir(&app)?.join(&full_path);

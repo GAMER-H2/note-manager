@@ -10,6 +10,7 @@ import NoteModal from "./components/NoteModal.vue";
 import SettingsModal from "./components/SettingsModal.vue";
 import FolderModal from "./components/FolderModal.vue";
 import FolderDeleteModal from "./components/FolderDeleteModal.vue";
+import DeleteNoteModal from "./components/DeleteNoteModal.vue";
 import ContextMenu from "./components/ContextMenu.vue";
 import { useNotes } from "./composables/useNotes.js";
 import { useReminders } from "./composables/useReminders.js";
@@ -20,8 +21,10 @@ import {
   useFolders,
   PINNED_FOLDER,
   GENERAL_FOLDER,
+  ARCHIVE_FOLDER,
 } from "./composables/useFolders.js";
 import { usePinned } from "./composables/usePinned.js";
+import { useNoteArchive } from "./composables/useNoteArchive.js";
 import { useContextMenu } from "./composables/useContextMenu.js";
 import { useContextMenuTrigger } from "./composables/useContextMenuTrigger.js";
 import { useNoteClipboard } from "./composables/useNoteClipboard.js";
@@ -50,6 +53,14 @@ const {
 } = useFolders();
 const { loadPinned, reloadPinned, isPinned, togglePin, unpin } = usePinned();
 const {
+  loadArchiveOrigins,
+  reloadArchiveOrigins,
+  rememberOrigin,
+  originOf,
+  forgetOrigin,
+  forgetOrigins,
+} = useNoteArchive();
+const {
   config: syncConfig,
   syncing,
   loadSyncConfig,
@@ -59,11 +70,22 @@ const { startAutoSync, stopAutoSync, syncSoon } = useAutoSync();
 const { openMenu } = useContextMenu();
 const { clipboard, copyNote } = useNoteClipboard();
 
-const visibleNotes = computed(() =>
-  selectedFolder.value === PINNED_FOLDER
-    ? notes.value.filter((n) => isPinned(n.id))
-    : notes.value.filter((n) => n.folder === selectedFolder.value),
+const isArchived = (note) => note?.folder === ARCHIVE_FOLDER;
+const archivedCount = computed(
+  () => notes.value.filter((n) => n.folder === ARCHIVE_FOLDER).length,
 );
+const isArchiveView = computed(() => selectedFolder.value === ARCHIVE_FOLDER);
+
+const visibleNotes = computed(() => {
+  if (selectedFolder.value === PINNED_FOLDER) {
+    // Archived notes are unpinned on archive, but guard anyway.
+    return notes.value.filter((n) => isPinned(n.id) && n.folder !== ARCHIVE_FOLDER);
+  }
+  if (selectedFolder.value === ARCHIVE_FOLDER) {
+    return notes.value.filter((n) => n.folder === ARCHIVE_FOLDER);
+  }
+  return notes.value.filter((n) => n.folder === selectedFolder.value);
+});
 
 // Sort mode + grid/list view are persisted per-device in settings.
 const sortMode = computed(() => settings.noteSort ?? DEFAULT_NOTE_SORT);
@@ -100,6 +122,91 @@ const deleteNoteAndReminder = async (id) => {
   await removeReminder(id);
   await unpin(id);
   await deleteNote(id);
+};
+
+// Archiving moves a note into the Archive folder, remembering where it came
+// from so it can be restored. Archived notes can't hold reminders or pins, so
+// those are stripped on the way in.
+const archiveNote = async (note) => {
+  try {
+    await rememberOrigin(note.id, note.folder);
+    await removeReminder(note.id);
+    await unpin(note.id);
+    await moveNote(note.id, ARCHIVE_FOLDER);
+  } catch (err) {
+    console.error("Failed to archive note:", err);
+  }
+};
+
+// Restore returns a note to its original folder, or General if that folder is
+// gone. Clears the remembered origin.
+const restoreNote = async (note) => {
+  if (!note) return;
+  if (activeNote.value?.id === note.id) activeNote.value = null;
+  try {
+    const origin = originOf(note.id);
+    const target =
+      origin && realFolders.value.includes(origin) ? origin : GENERAL_FOLDER;
+    await moveNote(note.id, target);
+    await forgetOrigin(note.id);
+  } catch (err) {
+    console.error("Failed to restore note:", err);
+  }
+};
+
+const permanentlyDeleteNote = async (note) => {
+  if (!note) return;
+  if (activeNote.value?.id === note.id) activeNote.value = null;
+  try {
+    await deleteNoteAndReminder(note.id);
+    await forgetOrigin(note.id);
+  } catch (err) {
+    console.error("Failed to delete note:", err);
+  }
+};
+
+// Delete confirmation: Archive / Delete / Cancel (Archive hidden for a note
+// that's already archived).
+const deleteModalOpen = ref(false);
+const deleteTarget = ref(null);
+
+const requestDeleteNote = (note) => {
+  if (!note) return;
+  deleteTarget.value = note;
+  deleteModalOpen.value = true;
+};
+
+const onDeleteArchive = async () => {
+  const note = deleteTarget.value;
+  deleteModalOpen.value = false;
+  if (!note) return;
+  if (activeNote.value?.id === note.id) activeNote.value = null;
+  await archiveNote(note);
+};
+
+const onDeleteConfirm = async () => {
+  const note = deleteTarget.value;
+  deleteModalOpen.value = false;
+  if (note) await permanentlyDeleteNote(note);
+};
+
+// Empty the Archive (permanently deletes every archived note), with a confirm.
+const emptyArchiveOpen = ref(false);
+
+const confirmEmptyArchive = async () => {
+  emptyArchiveOpen.value = false;
+  try {
+    const ids = await invoke("delete_folder", {
+      req: { folder: ARCHIVE_FOLDER, mode: "delete" },
+    });
+    await forgetOrigins(Array.isArray(ids) ? ids : []);
+    await loadFolders();
+    await loadNotes();
+    // The Archive view is empty (and greyed) now — step back to General.
+    if (selectedFolder.value === ARCHIVE_FOLDER) selectFolder(GENERAL_FOLDER);
+  } catch (err) {
+    console.error("Failed to empty archive:", err);
+  }
 };
 
 const settingsOpen = ref(false);
@@ -157,7 +264,13 @@ const addNote = async () => {
 // file it points at may no longer exist.
 const onVaultChanged = async () => {
   activeNote.value = null;
-  await Promise.all([loadNotes(), loadFolders(), reloadPinned(), reloadReminders()]);
+  await Promise.all([
+    loadNotes(),
+    loadFolders(),
+    reloadPinned(),
+    reloadReminders(),
+    reloadArchiveOrigins(),
+  ]);
   // Arriving reminders exist only on disk — nothing is scheduled for them on
   // this device until we ask for it.
   await rescheduleAllReminders();
@@ -167,6 +280,14 @@ const onVaultChanged = async () => {
 // nothing is holding the editor open, so it's safe to push it out.
 watch(activeNote, (now, before) => {
   if (before && !now) syncSoon();
+});
+
+// An emptied Archive is a greyed-out dead end, so step back to General if the
+// last archived note is restored or deleted while it's being viewed.
+watch(archivedCount, (count) => {
+  if (count === 0 && selectedFolder.value === ARCHIVE_FOLDER) {
+    selectFolder(GENERAL_FOLDER);
+  }
 });
 
 const syncConfigured = computed(() => !!syncConfig.value);
@@ -247,21 +368,25 @@ const pasteInCurrentFolder = async () => {
 // manager to open into.
 const desktop = !isAndroid();
 
-// Menu for a note card. Items mirror the note action menu (Pin, Delete) plus
-// Copy/Paste and (on desktop) the reveal-in-file-browser entry.
+// Menu for a note card. Archived notes only offer Restore (they can't be
+// pinned/pasted); otherwise the usual Pin/Copy/Paste. Both end in Delete, which
+// opens the Archive/Delete confirmation.
 const openNoteMenu = (note, x, y) => {
-  const items = [
-    {
+  const items = [];
+  if (isArchived(note)) {
+    items.push({ label: "Restore", action: () => restoreNote(note) });
+  } else {
+    items.push({
       label: isPinned(note.id) ? "Unpin" : "Pin",
       action: () => togglePin(note.id),
-    },
-    { label: "Copy", action: () => copyNote(note) },
-    {
+    });
+    items.push({ label: "Copy", action: () => copyNote(note) });
+    items.push({
       label: "Paste",
       disabled: !clipboard.value,
       action: pasteInCurrentFolder,
-    },
-  ];
+    });
+  }
   if (desktop) {
     items.push({
       label: "Show in file browser",
@@ -271,7 +396,7 @@ const openNoteMenu = (note, x, y) => {
   items.push({
     label: "Delete",
     danger: true,
-    action: () => deleteNoteAndReminder(note.id),
+    action: () => requestDeleteNote(note),
   });
   openMenu(x, y, items);
 };
@@ -418,6 +543,7 @@ onMounted(async () => {
   loadReminders();
   loadFolders();
   loadPinned();
+  loadArchiveOrigins();
   // Load settings first so the theme applies and notifications use the chosen
   // urgency, then fire-and-forget notification setup (never blocks the UI).
   await loadSettings();
@@ -475,6 +601,7 @@ onUnmounted(() => {
       :sidebar-open="sidebarOpen"
       :syncing="syncing"
       :sync-enabled="syncConfigured"
+      :current-folder="selectedFolder"
       @toggle-sidebar="toggleSidebar"
       @open-settings="settingsOpen = true"
       @sync="onHeaderSync"
@@ -483,6 +610,7 @@ onUnmounted(() => {
     <AppSidebar
       :open="sidebarOpen"
       :selected-folder="selectedFolder"
+      :archived-count="archivedCount"
       @select-folder="onSelectFolder"
       @add-folder="onAddFolder"
       @add-subfolder="onAddSubfolder"
@@ -547,6 +675,17 @@ onUnmounted(() => {
           }}</span>
           {{ viewMode === "grid" ? "List view" : "Grid view" }}
         </button>
+
+        <button
+          v-if="isArchiveView"
+          type="button"
+          class="notes-toolbar__button notes-toolbar__button--danger notes-toolbar__button--end"
+          :disabled="archivedCount === 0"
+          @click="emptyArchiveOpen = true"
+        >
+          <span class="notes-toolbar__icon" aria-hidden="true">🗑</span>
+          Clear archive
+        </button>
       </div>
 
       <section
@@ -561,6 +700,7 @@ onUnmounted(() => {
         />
       </section>
       <button
+        v-if="!isArchiveView"
         class="add-note-button"
         type="button"
         aria-label="Add note"
@@ -599,11 +739,75 @@ onUnmounted(() => {
     <NoteModal
       :note="activeNote"
       :save="updateNote"
-      :remove="deleteNoteAndReminder"
       :move-note="moveNote"
       :open-link="openNoteByLink"
+      :archived="isArchived(activeNote)"
       @close="onNoteClose"
+      @request-delete="requestDeleteNote(activeNote)"
+      @request-restore="restoreNote(activeNote)"
     />
+
+    <DeleteNoteModal
+      :open="deleteModalOpen"
+      :can-archive="!isArchived(deleteTarget)"
+      @close="deleteModalOpen = false"
+      @archive="onDeleteArchive"
+      @delete="onDeleteConfirm"
+    />
+
+    <!-- Empty-archive confirmation (permanent). -->
+    <div
+      v-if="emptyArchiveOpen"
+      class="folder-overlay"
+      @click="emptyArchiveOpen = false"
+    ></div>
+    <section
+      v-if="emptyArchiveOpen"
+      class="folder-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Clear archive"
+      aria-hidden="false"
+      @click.self="emptyArchiveOpen = false"
+    >
+      <div class="folder-modal__content" role="document" tabindex="-1">
+        <header class="folder-modal__header">
+          <h2>Clear the archive?</h2>
+          <button
+            type="button"
+            class="settings-close-button"
+            aria-label="Close"
+            @click="emptyArchiveOpen = false"
+          >
+            ×
+          </button>
+        </header>
+        <div class="folder-modal__body">
+          <p class="folder-delete__lead">
+            This permanently deletes all
+            {{ archivedCount }} archived note{{ archivedCount === 1 ? "" : "s" }}.
+            This can't be undone.
+          </p>
+        </div>
+        <footer class="reminder-modal__footer">
+          <span class="reminder-footer-spacer"></span>
+          <button
+            type="button"
+            class="settings-secondary"
+            @click="emptyArchiveOpen = false"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="settings-primary settings-primary--danger"
+            @click="confirmEmptyArchive"
+          >
+            Delete all
+          </button>
+        </footer>
+      </div>
+    </section>
 
     <ContextMenu />
 

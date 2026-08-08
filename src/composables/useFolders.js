@@ -3,6 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const PINNED_FOLDER = "Pinned";
 export const GENERAL_FOLDER = "General";
+// "Archive" is a real folder on disk, but it's a reserved, special view (a
+// trash-bin-like place) rendered on its own in the sidebar — so it's kept out
+// of the normal folder list/tree just like the virtual "Pinned" view.
+export const ARCHIVE_FOLDER = "Archive";
 
 // Shared, module-level store. `realFolders` mirrors the actual directories on
 // disk (always includes "General"), each entry a full relative path
@@ -56,7 +60,13 @@ export function useFolders() {
   const loadFolders = async () => {
     try {
       const list = await invoke("list_folders");
-      realFolders.value = Array.isArray(list) && list.length ? list : [GENERAL_FOLDER];
+      // Archive is a real directory once something is archived, but it's shown
+      // separately in the sidebar, so keep it (and any nesting under it) out of
+      // the normal folder list/tree.
+      const folders = Array.isArray(list)
+        ? list.filter((f) => f !== ARCHIVE_FOLDER && !f.startsWith(`${ARCHIVE_FOLDER}/`))
+        : [];
+      realFolders.value = folders.length ? folders : [GENERAL_FOLDER];
     } catch (e) {
       console.warn("Failed to load folders:", e);
     }
@@ -101,10 +111,12 @@ export function useFolders() {
     else expandedPaths.add(path);
   };
 
-  // Pinned isn't a real storage location, so new notes created while viewing
-  // it fall back to the default folder instead.
+  // Pinned isn't a real storage location and Archive is a trash bin, so new
+  // notes created while viewing either fall back to the default folder.
   const defaultNoteFolder = () =>
-    selectedFolder.value === PINNED_FOLDER ? GENERAL_FOLDER : selectedFolder.value;
+    selectedFolder.value === PINNED_FOLDER || selectedFolder.value === ARCHIVE_FOLDER
+      ? GENERAL_FOLDER
+      : selectedFolder.value;
 
   return {
     folders,

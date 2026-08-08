@@ -21,16 +21,16 @@ const props = defineProps({
   note: { type: Object, default: null },
   // async (id, content) => void  — persists the note in the backend.
   save: { type: Function, required: true },
-  // async (id) => void — deletes the note in the backend.
-  remove: { type: Function, required: true },
   // async (id, folder) => void — moves the note to another folder.
   moveNote: { type: Function, required: true },
   // (folderPath, title) => boolean — opens a note referenced by a markdown
   // link, returning whether a match was found.
   openLink: { type: Function, required: true },
+  // The note lives in the Archive folder: read-only, restore instead of edit.
+  archived: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["close"]);
+const emit = defineEmits(["close", "request-delete", "request-restore"]);
 
 const { getReminder, refreshReminder } = useReminders();
 const { settings } = useSettings();
@@ -78,6 +78,7 @@ const fileName = computed(() => {
 
 const subtitle = computed(() => {
   if (!props.note) return "";
+  if (props.archived) return `${fileName.value} • Archived (read-only)`;
   const mode = autosaveEnabled.value ? "auto-saves" : "manual save";
   return `${fileName.value} • Markdown editor (${mode})`;
 });
@@ -345,19 +346,24 @@ const onPreviewClick = async (event) => {
   }
 };
 
+// Delegates to App, which shows the Archive/Delete confirmation and performs
+// the action (closing this editor if the note goes away).
 const handleDelete = async () => {
   if (actionsMenuOpen.value) {
     await requestCloseActionsMenu();
     await nextTick();
   }
   if (!props.note) return;
-  try {
-    await props.remove(props.note.id);
-    requestHistoryClose();
-  } catch (err) {
-    console.error("Failed to delete note:", err);
-    status.value = "Delete failed";
+  emit("request-delete");
+};
+
+const handleRestore = async () => {
+  if (actionsMenuOpen.value) {
+    await requestCloseActionsMenu();
+    await nextTick();
   }
+  if (!props.note) return;
+  emit("request-restore");
 };
 
 const onKeydown = (e) => {
@@ -486,6 +492,17 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
+      <div v-if="archived" class="note-modal__archived-bar">
+        <span>Archived — read only</span>
+        <button
+          type="button"
+          class="note-modal__restore"
+          @click="handleRestore"
+        >
+          Restore
+        </button>
+      </div>
+
       <div class="note-modal__editor-shell">
         <div
           v-if="syntaxHighlight"
@@ -504,6 +521,7 @@ onBeforeUnmount(() => {
           aria-label="Edit note (markdown)"
           placeholder="Start typing markdown…"
           spellcheck="true"
+          :readonly="archived"
           @input="onInput"
           @scroll="syncPreviewScroll"
           @blur="autosaveEnabled ? persistNow() : undefined"
@@ -514,7 +532,7 @@ onBeforeUnmount(() => {
         <span class="note-modal__status">{{ status }}</span>
         <div class="note-modal__footer-actions">
           <button
-            v-if="!autosaveEnabled"
+            v-if="!autosaveEnabled && !archived"
             type="button"
             class="note-modal__done"
             :disabled="!dirty || status === 'Saving…'"
@@ -545,53 +563,54 @@ onBeforeUnmount(() => {
         aria-modal="true"
         aria-label="Note actions"
       >
-        <label class="note-actions-menu__item note-actions-menu__item--select">
-          Folder
-          <select
-            aria-label="Folder"
-            :value="noteFolder"
-            @change="onFolderChange($event.target.value)"
+        <template v-if="archived">
+          <button type="button" class="note-actions-menu__item" @click="handleRestore">
+            Restore
+          </button>
+          <button type="button" class="note-actions-menu__item" @click="openHistory">
+            Version history
+          </button>
+          <button type="button" class="note-actions-menu__item" @click="onExport">
+            Export markdown
+          </button>
+        </template>
+        <template v-else>
+          <label class="note-actions-menu__item note-actions-menu__item--select">
+            Folder
+            <select
+              aria-label="Folder"
+              :value="noteFolder"
+              @change="onFolderChange($event.target.value)"
+            >
+              <option v-for="f in realFolders" :key="f" :value="f">{{ f }}</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="note-actions-menu__item"
+            :class="{ 'is-active': pinned }"
+            @click="onTogglePin"
           >
-            <option v-for="f in realFolders" :key="f" :value="f">{{ f }}</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          class="note-actions-menu__item"
-          :class="{ 'is-active': pinned }"
-          @click="onTogglePin"
-        >
-          {{ pinned ? "Unpin" : "Pin" }}
-        </button>
-        <button
-          type="button"
-          class="note-actions-menu__item"
-          :class="{ 'is-active': hasReminder }"
-          @click="openReminder"
-        >
-          {{ hasReminder ? "Edit reminder" : "Reminder" }}
-        </button>
-        <button
-          type="button"
-          class="note-actions-menu__item"
-          @click="openHistory"
-        >
-          Version history
-        </button>
-        <button
-          type="button"
-          class="note-actions-menu__item"
-          @click="onImport"
-        >
-          Import markdown
-        </button>
-        <button
-          type="button"
-          class="note-actions-menu__item"
-          @click="onExport"
-        >
-          Export markdown
-        </button>
+            {{ pinned ? "Unpin" : "Pin" }}
+          </button>
+          <button
+            type="button"
+            class="note-actions-menu__item"
+            :class="{ 'is-active': hasReminder }"
+            @click="openReminder"
+          >
+            {{ hasReminder ? "Edit reminder" : "Reminder" }}
+          </button>
+          <button type="button" class="note-actions-menu__item" @click="openHistory">
+            Version history
+          </button>
+          <button type="button" class="note-actions-menu__item" @click="onImport">
+            Import markdown
+          </button>
+          <button type="button" class="note-actions-menu__item" @click="onExport">
+            Export markdown
+          </button>
+        </template>
         <button
           type="button"
           class="note-actions-menu__item note-actions-menu__item--danger"
